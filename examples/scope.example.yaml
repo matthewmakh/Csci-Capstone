@@ -1,0 +1,25 @@
+# Authorization scope for the vulnerability scanner.
+#
+# This file is REQUIRED for every scan. The scanner refuses to send a
+# single packet without it, and cross-checks every target IP against
+# the CIDR ranges listed here before probing.
+#
+# Copy this file, edit for your engagement, and pass via --scope-file.
+
+classification: lab
+
+authorized_cidrs:
+  - 127.0.0.0/8
+  - 192.168.56.0/24  # Example: isolated VirtualBox host-only network
+  # - 10.0.0.0/24    # Add your own authorized ranges here
+
+attestation:
+  authorized_by: "CSCI 401 Capstone Team"
+  date: "2026-04-24"
+  statement: >
+    I affirm that all IP ranges listed above are networks that I
+    personally own, operate, or have received explicit written
+    authorization to scan for security assessment purposes. I
+    understand that scanning networks outside this scope may violate
+    the Computer Fraud and Abuse Act (18 U.S.C. 1030) and similar
+    statutes in other jurisdictions.
