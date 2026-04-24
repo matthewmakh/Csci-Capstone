@@ -30,31 +30,39 @@ Scanning networks you do not own or have written permission to test is illegal i
 
 Every target IP is cross-checked against the scope before any packet is sent. See `docs/ethics.md` for details.
 
-## Install
+## Quick Start
 
-Requires Python 3.10+.
+Requires Python 3.10+ and `make`.
 
 ```
 git clone https://github.com/matthewmakh/csci-capstone
 cd csci-capstone
-python3 -m venv .venv
-source .venv/bin/activate
-make install
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+git checkout claude/refactor-network-scanner-UqkiF
+make setup
+make demo
 ```
+
+`make setup` creates a virtualenv, installs the package, copies `.env.example`
+to `.env`, prompts you for your `ANTHROPIC_API_KEY`, and runs the tests. It is
+idempotent — safe to re-run if anything changes.
+
+`make demo` spins up a local fake-vulnerable service and runs the full
+recon → enrichment → triage → reporter pipeline against it. Costs roughly
+$0.05–$0.20 per run with Claude Opus 4.7.
 
 ## Usage
 
 ```
-# Inspect CLI
-python -m vuln_platform --help
+# Help
+.venv/bin/python -m vuln_platform --help
 
-# End-to-end demo against a local fake target (no external services, no root required)
+# Demo
 make demo
 
-# Scan real targets (requires sudo for scapy raw sockets)
-sudo python -m vuln_platform scan \
+# Scan a real target (requires sudo for scapy raw sockets)
+make scan ARGS='--ip 127.0.0.1 --ports 1-1024'
+# or directly:
+sudo .venv/bin/python -m vuln_platform scan \
     --scope-file examples/scope.example.yaml \
     --ip 127.0.0.1 \
     --ports 1-1024
