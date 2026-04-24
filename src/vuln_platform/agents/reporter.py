@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from ..ethics import Scope
-from ..models import Finding
+from ..models import CVE, Finding, Host
 from .base import AgentContext, BaseAgent
 
 
@@ -26,6 +26,8 @@ class ReporterAgent(BaseAgent):
             scope=self.scope,
             scope_target=context.scope_target,
             findings=context.findings,
+            hosts=context.hosts,
+            cves_by_service=context.cves_by_service,
         )
         return context
 
@@ -35,6 +37,8 @@ def render_report(
     scope: Scope,
     scope_target: str,
     findings: list[Finding],
+    hosts: list[Host] | None = None,
+    cves_by_service: dict[str, list[CVE]] | None = None,
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     counts = _severity_counts(findings)
@@ -54,10 +58,22 @@ def render_report(
         f"{scope.attestation.authorized_by} ({scope.attestation.date})."
     )
     lines.append("")
-    if not findings:
-        lines.append("No findings were produced by the pipeline.")
+    host_count = len(hosts or [])
+    open_port_count = sum(len(h.open_ports) for h in (hosts or []))
+    cve_count = sum(len(v) for v in (cves_by_service or {}).values())
+    summary_bits = [
+        f"**{host_count}** live host(s)",
+        f"**{open_port_count}** open port(s)",
+        f"**{cve_count}** CVE(s) discovered",
+    ]
+    if findings:
+        summary_bits.append(_counts_line(counts))
     else:
-        lines.append(_counts_line(counts))
+        summary_bits.append(
+            "_Note: triage was not run; set `ANTHROPIC_API_KEY` to enable "
+            "LLM-reasoned severity ranking._"
+        )
+    lines.append("Pipeline summary: " + " · ".join(summary_bits) + ".")
     lines.append("")
 
     # Methodology
@@ -84,6 +100,29 @@ def render_report(
     for cidr in scope.cidrs:
         lines.append(f"- `{cidr}`")
     lines.append("")
+
+    # Discovered services (always shown, independent of triage)
+    if hosts:
+        lines.append("## Discovered Services")
+        lines.append("")
+        lines.append("| Host | Port | Service | Version | Banner | CVEs |")
+        lines.append("|---|---|---|---|---|---|")
+        for host in hosts:
+            for p in host.open_ports:
+                svc = p.service
+                name = svc.name if svc else "unknown"
+                version = (svc.version if svc else None) or "—"
+                banner_preview = _short(svc.banner if svc else None, 60)
+                key = f"{name.lower()} {(svc.version if svc else '') or ''}".strip()
+                cves = (cves_by_service or {}).get(key, [])
+                cve_cell = ", ".join(c.cve_id for c in cves[:3]) if cves else "—"
+                if len(cves) > 3:
+                    cve_cell += f" (+{len(cves) - 3})"
+                lines.append(
+                    f"| {host.ip} | {p.number} | {name} | {version} "
+                    f"| {banner_preview} | {cve_cell} |"
+                )
+        lines.append("")
 
     # Findings summary table
     lines.append("## Findings Summary")
@@ -153,6 +192,15 @@ def _severity_counts(findings: list[Finding]) -> dict[str, int]:
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     return counts
+
+
+def _short(s: str | None, limit: int) -> str:
+    if not s:
+        return "—"
+    flat = " ".join(s.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1] + "…"
 
 
 def _counts_line(counts: dict[str, int]) -> str:

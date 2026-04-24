@@ -3,11 +3,18 @@
 For each unique service+version combination, query the NIST NVD API v2.0
 by keyword match. Cache results locally in SQLite so repeat scans of the
 same targets don't re-hit the NVD rate limit.
+
+When NVD is unreachable (rate-limited, no internet, air-gapped lab) the
+agent falls back to a local seed file mapping normalized
+'service version' keywords to pre-fetched CVE records. This keeps demos
+and offline runs deterministic.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -34,11 +41,15 @@ class EnrichmentAgent(BaseAgent):
         api_key: str | None = None,
         http_client: httpx.Client | None = None,
         results_per_query: int = DEFAULT_RESULTS_PER_QUERY,
+        seed_path: Path | None = None,
     ) -> None:
         self.store = store
         self.api_key = api_key
         self.http_client = http_client or httpx.Client(timeout=10.0)
         self.results_per_query = results_per_query
+        self.seed: dict[str, list[CVE]] = (
+            _load_seed(seed_path) if seed_path else {}
+        )
 
     def run(self, context: AgentContext) -> AgentContext:
         queried: set[str] = set()
@@ -52,8 +63,19 @@ class EnrichmentAgent(BaseAgent):
                 queried.add(key)
 
                 keyword = _build_keyword(port.service.name, port.service.version)
-                logger.info("enrichment: NVD lookup %r", keyword)
-                cves = self._fetch_cves(keyword)
+                seeded = self.seed.get(key)
+                if seeded:
+                    logger.info(
+                        "enrichment: using %d seeded CVE(s) for %r",
+                        len(seeded), keyword,
+                    )
+                    cves = seeded
+                else:
+                    logger.info("enrichment: NVD lookup %r", keyword)
+                    cves = self._fetch_cves(keyword)
+                    if not cves and key in self.seed:
+                        cves = self.seed[key]
+
                 context.cves_by_service[key] = cves
                 for cve in cves:
                     self.store.upsert_cve(cve)
@@ -152,3 +174,33 @@ def _parse_date(s: str | None) -> datetime | None:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _load_seed(path: Path) -> dict[str, list[CVE]]:
+    """Load a CVE seed file: {keyword: [cve_dict, ...]} -> dict of CVE objects."""
+    try:
+        raw = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("enrichment: could not load seed %s: %s", path, e)
+        return {}
+    seed: dict[str, list[CVE]] = {}
+    for keyword, entries in raw.items():
+        if keyword.startswith("_") or not isinstance(entries, list):
+            continue
+        cves: list[CVE] = []
+        for entry in entries:
+            try:
+                cves.append(CVE(
+                    cve_id=entry["cve_id"],
+                    description=entry.get("description", ""),
+                    cvss_score=entry.get("cvss_score"),
+                    cvss_severity=entry.get("cvss_severity"),
+                    published=_parse_date(entry.get("published")),
+                    references=list(entry.get("references", []))[:10],
+                ))
+            except (KeyError, TypeError) as e:
+                logger.warning(
+                    "enrichment: skipping malformed seed entry: %s", e
+                )
+        seed[keyword.lower().strip()] = cves
+    return seed

@@ -85,6 +85,14 @@ def _build_parser() -> argparse.ArgumentParser:
                            "(default: stdout)")
     scan.add_argument("--no-triage", action="store_true",
                       help="skip the Claude triage step (offline mode)")
+    scan.add_argument("--scan-method", choices=["auto", "syn", "connect"],
+                      default="auto",
+                      help="port scan technique. 'syn' needs root; "
+                           "'connect' uses userland sockets; "
+                           "'auto' picks based on privileges (default).")
+    scan.add_argument("--cve-seed", type=Path, default=None,
+                      help="path to a JSON CVE seed file used as a "
+                           "fallback when NVD is unreachable.")
 
     demo = sub.add_parser(
         "demo",
@@ -118,10 +126,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    if os.name == "posix" and os.geteuid() != 0:
+    if (
+        args.scan_method == "syn"
+        and os.name == "posix"
+        and os.geteuid() != 0
+    ):
         print(
-            "warning: scapy SYN scans typically require root / CAP_NET_RAW. "
-            "Continuing, but expect failures without privileges.",
+            "warning: --scan-method=syn typically requires root / CAP_NET_RAW. "
+            "Use --scan-method=connect (or 'auto') for unprivileged scanning.",
             file=sys.stderr,
         )
 
@@ -143,8 +155,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             scope=scope, store=store, ports=ports,
             timeout=args.timeout, workers=args.workers,
             skip_host_discovery=args.skip_host_discovery,
+            scan_method=args.scan_method,
         )
-        enrichment = EnrichmentAgent(store=store, api_key=settings.nvd_api_key)
+        enrichment = EnrichmentAgent(
+            store=store,
+            api_key=settings.nvd_api_key,
+            seed_path=args.cve_seed,
+        )
         reporter = ReporterAgent(scope=scope)
 
         agents = [recon, enrichment]
@@ -173,14 +190,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 def _cmd_demo(args: argparse.Namespace) -> int:
     """Spin up the local fake target, scan it with skip-host-discovery, report."""
     settings = load_settings()
-    fake_target_script = (
-        Path(__file__).resolve().parent.parent.parent
-        / "examples" / "demo_target" / "fake_service.py"
-    )
-    scope_file = (
-        Path(__file__).resolve().parent.parent.parent
-        / "examples" / "scope.example.yaml"
-    )
+    examples_root = Path(__file__).resolve().parent.parent.parent / "examples"
+    fake_target_script = examples_root / "demo_target" / "fake_service.py"
+    scope_file = examples_root / "scope.example.yaml"
+    cve_seed = examples_root / "demo_target" / "seed_cves.json"
     if not fake_target_script.exists() or not scope_file.exists():
         print(
             "error: demo assets missing. Expected "
@@ -206,6 +219,10 @@ def _cmd_demo(args: argparse.Namespace) -> int:
             skip_host_discovery=True,
             report=args.report,
             no_triage=not settings.has_anthropic_key,
+            # Demo always uses the userland connect scan so it works on
+            # macOS / unprivileged shells without sudo.
+            scan_method="connect",
+            cve_seed=cve_seed if cve_seed.exists() else None,
         )
         if scan_args.no_triage:
             print(

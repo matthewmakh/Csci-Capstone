@@ -7,15 +7,24 @@ just coordinates them and persists the results.
 from __future__ import annotations
 
 import logging
+import os
 
 from ..ethics import Scope, enforce_in_scope
 from ..models import Host, Port
-from ..scanner import grab_banner, parse_service, ping_scan, port_scan
+from ..scanner import (
+    connect_scan,
+    grab_banner,
+    parse_service,
+    ping_scan,
+    port_scan,
+)
 from ..storage import Store
 from .base import AgentContext, BaseAgent
 
 
 logger = logging.getLogger(__name__)
+
+ScanMethod = str  # "auto" | "syn" | "connect"
 
 
 class ReconAgent(BaseAgent):
@@ -30,6 +39,7 @@ class ReconAgent(BaseAgent):
         timeout: float = 0.5,
         workers: int = 100,
         skip_host_discovery: bool = False,
+        scan_method: ScanMethod = "auto",
     ) -> None:
         self.scope = scope
         self.store = store
@@ -40,6 +50,27 @@ class ReconAgent(BaseAgent):
         # 127.0.0.1 when ping returns but scapy may not capture it), skip
         # discovery and assume the target is live.
         self.skip_host_discovery = skip_host_discovery
+        self.scan_method = self._resolve_method(scan_method)
+
+    @staticmethod
+    def _resolve_method(method: ScanMethod) -> ScanMethod:
+        if method != "auto":
+            return method
+        # SYN scans need raw sockets. On POSIX without root, fall back to a
+        # userland connect scan so the demo + unprivileged runs actually work.
+        if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
+            logger.info("recon: no raw-socket privileges; using TCP connect scan")
+            return "connect"
+        return "syn"
+
+    def _scan_ports(self, ip: str) -> list[int]:
+        if self.scan_method == "connect":
+            return connect_scan(
+                ip, self.ports, timeout=self.timeout, workers=self.workers
+            )
+        return port_scan(
+            ip, self.ports, timeout=self.timeout, workers=self.workers
+        )
 
     def run(self, context: AgentContext) -> AgentContext:
         logger.info("recon: enforcing scope on %s", context.scope_target)
@@ -54,9 +85,7 @@ class ReconAgent(BaseAgent):
 
         for ip in live_hosts:
             enforce_in_scope(self.scope, ip)
-            open_ports = port_scan(
-                ip, self.ports, timeout=self.timeout, workers=self.workers
-            )
+            open_ports = self._scan_ports(ip)
             ports: list[Port] = []
             for p in open_ports:
                 banner = grab_banner(ip, p)

@@ -23,11 +23,15 @@ from ..models import Service
 
 logger = logging.getLogger(__name__)
 
+_HTTP_PROBE = b"GET / HTTP/1.0\r\n\r\n"
 # Minimal protocol nudges keyed by port.
 _PROBES: dict[int, bytes] = {
-    80: b"GET / HTTP/1.0\r\n\r\n",
-    8000: b"GET / HTTP/1.0\r\n\r\n",
-    8080: b"GET / HTTP/1.0\r\n\r\n",
+    80: _HTTP_PROBE,
+    443: _HTTP_PROBE,
+    8000: _HTTP_PROBE,
+    8080: _HTTP_PROBE,
+    8443: _HTTP_PROBE,
+    18080: _HTTP_PROBE,  # demo target default
 }
 
 # Default service names by well-known port. These are only used as a
@@ -37,6 +41,7 @@ _WELL_KNOWN: dict[int, str] = {
     53: "dns", 80: "http", 110: "pop3", 143: "imap",
     443: "https", 445: "smb", 3306: "mysql", 3389: "rdp",
     5432: "postgresql", 6379: "redis", 8080: "http-alt",
+    8443: "https-alt", 18080: "http-alt",
 }
 
 
