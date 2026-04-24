@@ -45,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_scan(args)
     if args.command == "demo":
         return _cmd_demo(args)
+    if args.command == "web":
+        return _cmd_web(args)
     parser.print_help()
     return 2
 
@@ -102,6 +104,15 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="port to host the fake vulnerable service on")
     demo.add_argument("--report", type=Path,
                       help="write demo report to this path (default: stdout)")
+
+    web = sub.add_parser(
+        "web",
+        help="Start the web dashboard (FastAPI) for browsing scans + reports",
+    )
+    web.add_argument("--host", default="127.0.0.1",
+                     help="bind address (default: 127.0.0.1)")
+    web.add_argument("--port", type=int, default=8000,
+                     help="port to listen on (default: 8000)")
 
     return parser
 
@@ -237,6 +248,23 @@ def _cmd_demo(args: argparse.Namespace) -> int:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+        from .web import create_app
+    except ImportError:
+        print(
+            "error: web dependencies not installed. "
+            "Run `pip install -e '.[web]'` (or `make web`).",
+            file=sys.stderr,
+        )
+        return 2
+    app = create_app()
+    print(f"Dashboard: http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
 
 
 def _emit_report(markdown: str, path: Path | None) -> None:

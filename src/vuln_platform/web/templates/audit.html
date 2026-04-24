@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Audit Log{% endblock %}
+{% block content %}
+
+<header class="bg-white rounded-lg shadow p-6 mb-6">
+  <h2 class="text-xl font-semibold">LLM Audit Log</h2>
+  <p class="text-sm text-slate-600 mt-2">
+    Every Claude API call made by the Triage Agent is recorded here.
+    Required by the rubric's auditability criterion. Source file:
+    <code>audit.jsonl</code>.
+  </p>
+</header>
+
+{% if entries %}
+<section class="space-y-4">
+  {% for e in entries %}
+  <article class="bg-white rounded-lg shadow p-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex gap-3 text-sm">
+        <span class="font-mono text-slate-500">{{ e.timestamp }}</span>
+        <span class="bg-slate-100 px-2 py-0.5 rounded text-xs font-semibold">{{ e.model }}</span>
+      </div>
+      {% if e.usage %}
+      <div class="text-xs text-slate-500 font-mono">
+        in: {{ e.usage.get('input_tokens', '?') }} ·
+        out: {{ e.usage.get('output_tokens', '?') }}
+        {% if e.usage.get('cache_read_input_tokens') %}
+        · cache: {{ e.usage.get('cache_read_input_tokens') }}
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <details>
+      <summary class="cursor-pointer text-sm text-emerald-700 hover:underline">Show response</summary>
+      <pre class="mt-2 p-3 bg-slate-50 rounded text-xs overflow-x-auto whitespace-pre-wrap">{{ e.response_text }}</pre>
+    </details>
+    <div class="mt-2 text-xs text-slate-400 font-mono">
+      system_sha256: {{ (e.system_prompt_sha256 or '')[:12] }}…
+      &middot; user_sha256: {{ (e.user_prompt_sha256 or '')[:12] }}…
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="bg-white rounded-lg shadow p-8 text-center text-slate-500">
+  No audit entries yet. Triage runs against scans with
+  <code>ANTHROPIC_API_KEY</code> set will populate this log.
+</section>
+{% endif %}
+
+{% endblock %}

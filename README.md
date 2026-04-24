@@ -39,16 +39,22 @@ git clone https://github.com/matthewmakh/csci-capstone
 cd csci-capstone
 git checkout claude/refactor-network-scanner-UqkiF
 make setup
-make demo
+make demo      # CLI demo
+make web       # Browser dashboard at http://127.0.0.1:8000
 ```
 
-`make setup` creates a virtualenv, installs the package, copies `.env.example`
-to `.env`, prompts you for your `ANTHROPIC_API_KEY`, and runs the tests. It is
-idempotent — safe to re-run if anything changes.
+`make setup` creates a virtualenv, installs the package (including the web
+dashboard deps), copies `.env.example` to `.env`, prompts you for your
+`ANTHROPIC_API_KEY`, and runs the tests. It is idempotent — safe to re-run
+if anything changes.
 
 `make demo` spins up a local fake-vulnerable service and runs the full
 recon → enrichment → triage → reporter pipeline against it. Costs roughly
 $0.05–$0.20 per run with Claude Opus 4.7.
+
+`make web` launches a FastAPI dashboard for browsing past scans, viewing
+the rendered markdown report, inspecting the LLM audit log, and triggering
+one-click demos.
 
 ## Usage
 
@@ -56,8 +62,11 @@ $0.05–$0.20 per run with Claude Opus 4.7.
 # Help
 .venv/bin/python -m vuln_platform --help
 
-# Demo
+# CLI demo
 make demo
+
+# Browser dashboard
+make web
 
 # Scan a real target (requires sudo for scapy raw sockets)
 make scan ARGS='--ip 127.0.0.1 --ports 1-1024'
@@ -67,6 +76,19 @@ sudo .venv/bin/python -m vuln_platform scan \
     --ip 127.0.0.1 \
     --ports 1-1024
 ```
+
+## Web Dashboard
+
+`make web` starts a local FastAPI app on `http://127.0.0.1:8000`:
+
+- **/** — scan history with severity badges; one-click "Run demo" button
+- **/scans/{id}** — full markdown report rendered as HTML, plus a sortable
+  findings table with CVSS scores and CVE links to NVD
+- **/audit** — every Claude API call (model, tokens, response, prompt
+  hashes) for the rubric's auditability requirement
+
+The dashboard shares the SQLite store and `audit.jsonl` with the CLI, so
+anything you scan from either side shows up in the other.
 
 ## Testing
 

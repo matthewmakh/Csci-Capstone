@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Scan #{{ scan.id }}{% endblock %}
+{% block content %}
+
+<nav class="mb-4 text-sm">
+  <a href="/" class="text-emerald-700 hover:underline">&larr; All scans</a>
+</nav>
+
+<header class="bg-white rounded-lg shadow p-6 mb-6">
+  <h2 class="text-xl font-semibold">Scan #{{ scan.id }} &mdash; <span class="font-mono">{{ scan.scope_target }}</span></h2>
+  <p class="text-sm text-slate-500 mt-1">Started {{ scan.started_at }}</p>
+  <div class="flex gap-3 mt-4 text-sm">
+    {% set sev_counts = {} %}
+    {% for sev, group in findings_by_severity.items() %}
+      {% set _ = sev_counts.update({sev: group|length}) %}
+    {% endfor %}
+    {% for sev, color in [('critical', 'red'), ('high', 'orange'), ('medium', 'amber'), ('low', 'sky'), ('info', 'slate')] %}
+      {% set count = sev_counts.get(sev, 0) %}
+      {% if count %}
+        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 font-medium">
+          <span class="w-2 h-2 rounded-full bg-{{ color }}-500"></span>
+          {{ count }} {{ sev }}
+        </span>
+      {% endif %}
+    {% endfor %}
+  </div>
+</header>
+
+{% if findings %}
+<section class="bg-white rounded-lg shadow mb-6">
+  <div class="px-6 py-4 border-b">
+    <h3 class="text-lg font-semibold">Findings</h3>
+  </div>
+  <table class="w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+      <tr>
+        <th class="text-left px-6 py-3">Severity</th>
+        <th class="text-left px-6 py-3">CVE</th>
+        <th class="text-left px-6 py-3">Host:Port</th>
+        <th class="text-left px-6 py-3">Service</th>
+        <th class="text-left px-6 py-3">CVSS</th>
+        <th class="text-left px-6 py-3">Exploit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in findings %}
+      {% set color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky', 'info': 'slate'}[f.severity] %}
+      <tr class="border-t">
+        <td class="px-6 py-3">
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 text-xs font-semibold">
+            {{ f.severity }}
+          </span>
+        </td>
+        <td class="px-6 py-3 font-mono">
+          <a href="https://nvd.nist.gov/vuln/detail/{{ f.cve_id }}" target="_blank" rel="noopener"
+             class="text-emerald-700 hover:underline">{{ f.cve_id }}</a>
+        </td>
+        <td class="px-6 py-3 font-mono">{{ f.host_ip }}:{{ f.port }}</td>
+        <td class="px-6 py-3">{{ f.service_name }} {{ f.service_version or '' }}</td>
+        <td class="px-6 py-3">{{ f.cvss_score if f.cvss_score is not none else '—' }}</td>
+        <td class="px-6 py-3">{{ f.exploit_likelihood }}</td>
+      </tr>
+      <tr class="border-t bg-slate-50">
+        <td colspan="6" class="px-6 py-4 text-sm">
+          <p class="mb-2"><strong>Description:</strong> {{ f.cve_description }}</p>
+          <p class="mb-2"><strong>Triage rationale:</strong> {{ f.rationale }}</p>
+          <p><strong>Recommended action:</strong> {{ f.recommended_action }}</p>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="bg-white rounded-lg shadow">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
+    <h3 class="text-lg font-semibold">Full Markdown Report</h3>
+    <span class="text-xs text-slate-500">Identical to <code>vuln-platform scan</code> CLI output</span>
+  </div>
+  <div class="px-6 py-4 prose prose-slate max-w-none prose-table:text-sm">
+    {{ report_html | safe }}
+  </div>
+</section>
+
+{% endblock %}

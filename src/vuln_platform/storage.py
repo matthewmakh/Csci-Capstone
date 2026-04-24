@@ -152,6 +152,51 @@ class Store:
                 ),
             )
 
+    def list_scans(self, limit: int = 100) -> list[dict]:
+        """Return scan rows ordered newest-first, with summary counts."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    s.id, s.started_at, s.scope_target,
+                    (SELECT COUNT(*) FROM hosts h WHERE h.scan_id = s.id)
+                        AS host_count,
+                    (SELECT COUNT(*) FROM findings f WHERE f.scan_id = s.id)
+                        AS finding_count,
+                    (SELECT COUNT(*) FROM findings f
+                     WHERE f.scan_id = s.id AND f.severity = 'critical')
+                        AS critical_count
+                FROM scans s
+                ORDER BY s.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_scan(self, scan_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, started_at, scope_target FROM scans WHERE id = ?",
+                (scan_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_hosts(self, scan_id: int) -> list[Host]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT ip, hostname, open_ports_json FROM hosts "
+                "WHERE scan_id = ? ORDER BY id",
+                (scan_id,),
+            ).fetchall()
+        hosts: list[Host] = []
+        for r in rows:
+            ports = json.loads(r["open_ports_json"])
+            hosts.append(Host(
+                ip=r["ip"], hostname=r["hostname"], open_ports=ports
+            ))
+        return hosts
+
     def list_findings(self, scan_id: int) -> list[Finding]:
         with self._conn() as conn:
             rows = conn.execute(
