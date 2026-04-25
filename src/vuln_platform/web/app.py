@@ -230,6 +230,7 @@ class _DemoState:
 
 def _run_demo_pipeline(settings: Settings, event_bus: EventBus) -> int:
     """Run the demo pipeline against the local fake target, publishing events."""
+    import importlib.util
     import subprocess
     import sys
 
@@ -238,17 +239,26 @@ def _run_demo_pipeline(settings: Settings, event_bus: EventBus) -> int:
     scope_file = examples_root / "scope.example.yaml"
     cve_seed = examples_root / "demo_target" / "seed_cves.json"
 
+    # Pull port list from fake_service.PROFILES so we never drift.
+    name = "_demo_fake_service"
+    spec = importlib.util.spec_from_file_location(name, fake_target)
+    assert spec is not None and spec.loader is not None
+    fake_module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = fake_module  # dataclass evaluation needs this
+    spec.loader.exec_module(fake_module)
+    demo_ports = [p.port for p in fake_module.PROFILES]
+
     event_bus.publish(Event(
         type="demo.starting",
-        data={"target": "127.0.0.1", "demo_port": 18080},
+        data={"target": "127.0.0.1", "demo_ports": demo_ports},
     ))
 
     proc = subprocess.Popen(
-        [sys.executable, str(fake_target), "--port", "18080"],
+        [sys.executable, str(fake_target)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
-        time.sleep(0.8)
+        time.sleep(1.0)  # let all sockets bind
 
         scope = load_scope(scope_file)
         store = Store(settings.db_path)
@@ -257,8 +267,8 @@ def _run_demo_pipeline(settings: Settings, event_bus: EventBus) -> int:
         context = AgentContext(scan_id=scan_id, scope_target="127.0.0.1")
 
         recon = ReconAgent(
-            scope=scope, store=store, ports=[18080],
-            timeout=0.5, workers=4,
+            scope=scope, store=store, ports=demo_ports,
+            timeout=0.5, workers=8,
             skip_host_discovery=True, scan_method="connect",
             event_bus=event_bus,
         )

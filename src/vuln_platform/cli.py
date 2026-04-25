@@ -100,8 +100,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "demo",
         help="Run end-to-end demo against a local fake vulnerable service",
     )
-    demo.add_argument("--port", type=int, default=18080,
-                      help="port to host the fake vulnerable service on")
     demo.add_argument("--report", type=Path,
                       help="write demo report to this path (default: stdout)")
 
@@ -199,7 +197,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
-    """Spin up the local fake target, scan it with skip-host-discovery, report."""
+    """Spin up the local multi-service fake target, scan it, report."""
     settings = load_settings()
     examples_root = Path(__file__).resolve().parent.parent.parent / "examples"
     fake_target_script = examples_root / "demo_target" / "fake_service.py"
@@ -213,18 +211,25 @@ def _cmd_demo(args: argparse.Namespace) -> int:
         )
         return 2
 
-    print(f"[demo] starting fake vulnerable service on 127.0.0.1:{args.port}")
+    # Discover the demo's fake-service ports from the script itself so the
+    # CLI and fake_service.py never get out of sync.
+    demo_ports = _discover_demo_ports(fake_target_script)
+
+    print(
+        "[demo] starting fake services on 127.0.0.1: "
+        + ", ".join(str(p) for p in demo_ports)
+    )
     proc = subprocess.Popen(
-        [sys.executable, str(fake_target_script), "--port", str(args.port)],
+        [sys.executable, str(fake_target_script)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
-        time.sleep(0.8)  # let the socket bind
+        time.sleep(1.0)  # let all sockets bind
         print("[demo] running pipeline...")
         scan_args = argparse.Namespace(
             scope_file=scope_file,
             ip="127.0.0.1",
-            ports=str(args.port),
+            ports=",".join(str(p) for p in demo_ports),
             timeout=0.5,
             workers=10,
             skip_host_discovery=True,
@@ -248,6 +253,21 @@ def _cmd_demo(args: argparse.Namespace) -> int:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def _discover_demo_ports(fake_target_script: Path) -> list[int]:
+    """Import fake_service to read its PROFILES, so ports stay in sync."""
+    import importlib.util
+    import sys as _sys
+
+    name = "_demo_fake_service"
+    spec = importlib.util.spec_from_file_location(name, fake_target_script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Dataclass evaluation looks the module up in sys.modules.
+    _sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return [p.port for p in module.PROFILES]
 
 
 def _cmd_web(args: argparse.Namespace) -> int:

@@ -86,6 +86,7 @@ _PROBES: dict[int, ProbeFn] = {
     2525: _smtp_probe,
     # Redis
     6379: _redis_probe,
+    16379: _redis_probe,  # demo target
     # SSH / FTP / POP3 / IMAP all greet first
     22: _passive_probe,
     21: _passive_probe,
@@ -94,6 +95,10 @@ _PROBES: dict[int, ProbeFn] = {
     995: _passive_probe,
     993: _passive_probe,
     23: _passive_probe,  # telnet
+    # Demo target ports (greet first on these too)
+    12222: _passive_probe,  # demo SSH
+    12121: _passive_probe,  # demo FTP
+    12525: _smtp_probe,     # demo SMTP
 }
 
 # Default service names by well-known port. Fallback when the banner
@@ -105,6 +110,8 @@ _WELL_KNOWN: dict[int, str] = {
     993: "imaps", 995: "pop3s", 2525: "smtp-alt",
     3306: "mysql", 3389: "rdp", 5432: "postgresql", 6379: "redis",
     8080: "http-alt", 8443: "https-alt", 18080: "http-alt",
+    # Demo target ports
+    12121: "ftp", 12222: "ssh", 12525: "smtp", 16379: "redis",
 }
 
 

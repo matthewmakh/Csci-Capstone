@@ -1,5 +1,6 @@
 {
   "_comment": "Pre-fetched CVE data for the demo target so the pipeline produces findings even when the NVD API is rate-limited or unreachable. Keys are normalized 'service version' strings (lowercase, single-spaced).",
+
   "apache 2.4.49": [
     {
       "cve_id": "CVE-2021-41773",
@@ -21,6 +22,93 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2021-42013",
         "https://httpd.apache.org/security/vulnerabilities_24.html"
+      ]
+    }
+  ],
+
+  "openssh 7.2p2": [
+    {
+      "cve_id": "CVE-2018-15473",
+      "description": "OpenSSH through 7.7 is prone to a user enumeration vulnerability due to not delaying bailout for an invalid authenticating user until after the packet containing the request has been fully parsed, related to auth2-gss.c, auth2-hostbased.c, and auth2-pubkey.c. Attackers can determine valid usernames on the system by observing timing differences in failed authentication attempts.",
+      "cvss_score": 5.3,
+      "cvss_severity": "medium",
+      "published": "2018-08-17T19:29:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2018-15473",
+        "https://www.openssh.com/txt/release-7.8"
+      ]
+    },
+    {
+      "cve_id": "CVE-2016-10708",
+      "description": "sshd in OpenSSH before 7.4 allows remote attackers to cause a denial of service (NULL pointer dereference and daemon crash) via an out-of-sequence NEWKEYS message, as demonstrated by Honggfuzz, related to kex.c and packet.c.",
+      "cvss_score": 5.3,
+      "cvss_severity": "medium",
+      "published": "2018-01-21T22:29:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2016-10708"
+      ]
+    }
+  ],
+
+  "vsftpd 2.3.4": [
+    {
+      "cve_id": "CVE-2011-2523",
+      "description": "vsftpd 2.3.4 downloaded between 20110630 and 20110703 contains a backdoor which opens a shell on port 6200/tcp. The compromise was the result of an attacker uploading a malicious version of vsftpd to the official download server. Any user supplying a username ending in ':)' triggers the backdoor, which then listens on port 6200 and grants an unauthenticated root shell to anyone who connects.",
+      "cvss_score": 9.8,
+      "cvss_severity": "critical",
+      "published": "2011-07-03T19:55:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2011-2523",
+        "https://scarybeastsecurity.blogspot.com/2011/07/alert-vsftpd-download-backdoored.html"
+      ]
+    }
+  ],
+
+  "redis 4.0.10": [
+    {
+      "cve_id": "CVE-2022-0543",
+      "description": "It was discovered that a Debian-specific Redis packaging issue could result in an attacker being able to remotely execute Lua scripts that escape the Lua sandbox and execute arbitrary code on the host. This affects Redis 4.x and 5.x as packaged on Debian and derivatives, and is exploitable via any Redis instance that accepts the EVAL command (the default).",
+      "cvss_score": 10.0,
+      "cvss_severity": "critical",
+      "published": "2022-02-18T20:15:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2022-0543",
+        "https://www.ubercomp.com/posts/2022-01-20_redis_on_debian_rce"
+      ]
+    },
+    {
+      "cve_id": "CVE-2018-12453",
+      "description": "An issue was discovered in Redis before 5.0. Integer overflow in t_zset.c in zunionInterGenericCommand could lead to a heap-based buffer overflow, potentially allowing remote denial of service or code execution by an authenticated attacker who issues a crafted ZUNIONSTORE or ZINTERSTORE command against a server with a large dataset.",
+      "cvss_score": 8.8,
+      "cvss_severity": "high",
+      "published": "2018-06-18T17:29:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2018-12453"
+      ]
+    }
+  ],
+
+  "exim 4.87": [
+    {
+      "cve_id": "CVE-2019-15846",
+      "description": "Exim before 4.92.2 allows remote attackers to execute arbitrary code as root via a trailing backslash in the SMTP TLS handshake. The vulnerability is exploitable when STARTTLS support is configured (the default on most distributions). A specially crafted SNI value during the TLS handshake leads to a buffer overflow that can be turned into root code execution.",
+      "cvss_score": 9.8,
+      "cvss_severity": "critical",
+      "published": "2019-09-06T19:15:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2019-15846",
+        "https://www.openwall.com/lists/oss-security/2019/09/06/3"
+      ]
+    },
+    {
+      "cve_id": "CVE-2019-10149",
+      "description": "A flaw was found in Exim versions 4.87 to 4.91. Improper validation of the recipient address in the deliver_message() function in /src/deliver.c may allow remote attackers to execute arbitrary commands as root. Exploitation against a local Exim instance is trivial; remote exploitation is possible against default configurations and is the basis of the 'Return of the WIZard' worm campaign.",
+      "cvss_score": 9.8,
+      "cvss_severity": "critical",
+      "published": "2019-06-05T22:29:00+00:00",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2019-10149",
+        "https://www.qualys.com/2019/06/05/cve-2019-10149/return-wizard-rce-exim.txt"
       ]
     }
   ]
