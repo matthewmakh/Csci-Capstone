@@ -21,6 +21,7 @@ from ..scanner import (
     parse_service,
     ping_scan,
     port_scan,
+    tcp_ping_sweep,
 )
 from ..storage import Store
 from .base import AgentContext, BaseAgent
@@ -92,9 +93,19 @@ class ReconAgent(BaseAgent):
             live_hosts = [context.scope_target.split("/")[0]]
             logger.info("recon: skipping host discovery, assuming %s is live", live_hosts[0])
             self.emit("recon.host_discovery_skipped", host=live_hosts[0])
+        elif self.scan_method == "connect":
+            # Userland mode: use TCP ping sweep instead of ICMP (which
+            # needs raw sockets). This is what makes /24 home scans
+            # actually work without sudo.
+            self.emit("recon.host_discovery_method", method="tcp")
+            live_hosts = tcp_ping_sweep(context.scope_target)
+            logger.info("recon: %d live host(s) via TCP sweep", len(live_hosts))
+            self.emit("recon.host_discovery_done",
+                      live_count=len(live_hosts), hosts=live_hosts)
         else:
+            self.emit("recon.host_discovery_method", method="icmp")
             live_hosts = ping_scan(context.scope_target)
-            logger.info("recon: %d live host(s)", len(live_hosts))
+            logger.info("recon: %d live host(s) via ICMP", len(live_hosts))
             self.emit("recon.host_discovery_done",
                       live_count=len(live_hosts), hosts=live_hosts)
 

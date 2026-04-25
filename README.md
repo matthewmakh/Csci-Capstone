@@ -56,6 +56,28 @@ $0.05–$0.20 per run with Claude Opus 4.7.
 the rendered markdown report, inspecting the LLM audit log, and triggering
 one-click demos.
 
+## Scanning Your Own Network
+
+For lab/home-network scans, the tool can auto-detect your LAN and
+generate a scope file with an interactive attestation step:
+
+```
+make discover     # show what network you're attached to
+make scan-home    # interactive: detect LAN, prompt for attestation,
+                  # write home-scope.yaml, scan it
+```
+
+`init-scope` requires you to type your full name and the exact phrase
+`yes I authorize` before writing the scope file. The generated
+`home-scope.yaml` is gitignored so your attestation never gets
+committed by accident.
+
+**Only run `scan-home` against networks you own or have written
+permission to test.** Cloud providers, public Wi-Fi, school networks,
+and anything else where you don't have explicit authorization is off
+limits — the tool can't tell whose network you're on, so the
+attestation is on you.
+
 ## Usage
 
 ```

@@ -47,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_demo(args)
     if args.command == "web":
         return _cmd_web(args)
+    if args.command == "discover":
+        return _cmd_discover(args)
+    if args.command == "init-scope":
+        return _cmd_init_scope(args)
     parser.print_help()
     return 2
 
@@ -111,6 +115,36 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="bind address (default: 127.0.0.1)")
     web.add_argument("--port", type=int, default=8000,
                      help="port to listen on (default: 8000)")
+
+    discover = sub.add_parser(
+        "discover",
+        help="Auto-detect the local network you're attached to",
+    )
+    discover.add_argument(
+        "--cidr-only", action="store_true",
+        help="Print just the CIDR (useful for shell pipelines).",
+    )
+
+    init_scope = sub.add_parser(
+        "init-scope",
+        help=(
+            "Generate a scope file for your local network with an "
+            "interactive attestation. Required before scanning home/lab "
+            "networks."
+        ),
+    )
+    init_scope.add_argument(
+        "--output", "-o", type=Path, default=Path("home-scope.yaml"),
+        help="path to write the scope file (default: home-scope.yaml)",
+    )
+    init_scope.add_argument(
+        "--cidr",
+        help="override auto-detected CIDR (e.g. '192.168.1.0/24')",
+    )
+    init_scope.add_argument(
+        "--force", action="store_true",
+        help="overwrite an existing scope file",
+    )
 
     return parser
 
@@ -285,6 +319,135 @@ def _cmd_web(args: argparse.Namespace) -> int:
     print(f"Dashboard: http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
+
+
+def _cmd_discover(args: argparse.Namespace) -> int:
+    """Print info about the local network this host is attached to."""
+    from .scanner import detect_local_network
+
+    network = detect_local_network()
+    if args.cidr_only:
+        print(network.cidr)
+        return 0
+    print("Local network:")
+    print(f"  Your IP:      {network.ip}")
+    print(f"  CIDR:         {network.cidr}")
+    print(f"  Interface:    {network.interface or '(unknown)'}")
+    print(f"  Detected via: {network.detection_method}")
+    print()
+    print(f"Hosts in range: {network.network.num_addresses}")
+    print()
+    print("To scan it, generate a scope file with attestation:")
+    print(f"  vuln-platform init-scope")
+    print()
+    print("This tool will NOT scan a network without a signed scope file.")
+    return 0
+
+
+def _cmd_init_scope(args: argparse.Namespace) -> int:
+    """Detect the local network, prompt for an attestation, write a scope file."""
+    from datetime import datetime, timezone
+
+    from .scanner import detect_local_network
+
+    if args.cidr:
+        cidr = args.cidr
+        print(f"Using user-supplied CIDR: {cidr}")
+    else:
+        network = detect_local_network()
+        cidr = network.cidr
+        print(f"Detected local network: {cidr}")
+        print(
+            f"  (your IP {network.ip} on "
+            f"{network.interface or 'unknown interface'}, "
+            f"via {network.detection_method})"
+        )
+
+    out_path = args.output
+    if out_path.exists() and not args.force:
+        print(
+            f"\nerror: {out_path} already exists. "
+            f"Use --force to overwrite or --output to pick a different path.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print()
+    print(ETHICS_NOTICE)
+
+    try:
+        name = input("Your full name (will appear in the attestation): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.", file=sys.stderr)
+        return 130
+    if not name:
+        print("error: name is required for the attestation", file=sys.stderr)
+        return 2
+
+    print()
+    print(f"You are about to authorize active scanning of {cidr}.")
+    print("Only proceed if you OWN this network or have WRITTEN PERMISSION")
+    print("from the owner. Penalties under the CFAA can include criminal charges.")
+    print()
+    try:
+        confirm = input(
+            "Type the phrase 'yes I authorize' to confirm: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.", file=sys.stderr)
+        return 130
+    if confirm != "yes i authorize":
+        print("error: attestation phrase not entered exactly. Aborting.",
+              file=sys.stderr)
+        return 2
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    statement = (
+        f"I, {name}, affirm that I own or have written permission to perform "
+        f"vulnerability scanning against {cidr} as of {today}. I understand "
+        f"that scanning networks outside this scope may violate the Computer "
+        f"Fraud and Abuse Act (18 U.S.C. 1030) and similar statutes in other "
+        f"jurisdictions."
+    )
+    yaml_text = (
+        "# Scope file generated by `vuln-platform init-scope`.\n"
+        "# Edit by hand to widen/narrow CIDR ranges or update the attestation.\n"
+        "classification: lab\n"
+        "authorized_cidrs:\n"
+        f"  - {cidr}\n"
+        "attestation:\n"
+        f'  authorized_by: "{_yaml_escape(name)}"\n'
+        f'  date: "{today}"\n'
+        "  statement: |\n"
+        f"    {statement}\n"
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(yaml_text, encoding="utf-8")
+    print(f"\nWrote scope file to {out_path}")
+    print()
+    print("Next: run a scan against your network. Examples:")
+    print()
+    print("  # Top 1000 ports, no triage (fast, no API key needed)")
+    print(
+        f"  python -m vuln_platform scan --scope-file {out_path} "
+        f"--ip {cidr} --ports 1-1000 --no-triage"
+    )
+    print()
+    print("  # Common ports + LLM triage (uses your ANTHROPIC_API_KEY)")
+    print(
+        f"  python -m vuln_platform scan --scope-file {out_path} "
+        f"--ip {cidr} --ports 21,22,80,443,3306,3389,5432,6379,8080"
+    )
+    print()
+    print(f"  # One-shot via Make:")
+    print(f"  make scan-home")
+    print()
+    print(f"Note: scanning a /24 takes 1-3 minutes. Press Ctrl+C to abort.")
+    return 0
+
+
+def _yaml_escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _emit_report(markdown: str, path: Path | None) -> None:
