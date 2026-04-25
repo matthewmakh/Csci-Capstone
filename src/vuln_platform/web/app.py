@@ -1,28 +1,32 @@
 """FastAPI app factory + routes for the web dashboard.
 
 Pages:
-- /            — list of scans with summary counts
-- /scans/{id}  — rendered markdown report + findings table
-- /audit       — audit log viewer (LLM I/O records)
-- /about       — architecture / walkthrough page
-- /live        — real-time pipeline visualization with SSE
-- /demo        — POST: trigger a one-click demo scan in the background
-- /api/events  — SSE stream of pipeline events for the live view
+- /              — list of scans with summary counts
+- /scans/{id}    — rendered markdown report + findings table
+- /audit         — audit log viewer (LLM I/O records)
+- /about         — architecture / walkthrough page
+- /live          — real-time pipeline visualization with SSE
+- /scan-network  — interactive form: detect LAN, prompt for attestation,
+                   kick off a real network scan
+- /demo          — POST: trigger a one-click demo scan in the background
+- /api/events    — SSE stream of pipeline events for the live view
+- /api/network   — JSON: detected local network info
 """
 from __future__ import annotations
 
+import datetime as _dt
+import ipaddress
 import json
 import logging
 import queue
-import re
 import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import markdown as md_lib
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -37,10 +41,24 @@ from ..agents import (
 from ..agents.reporter import render_report
 from ..audit import AuditLogger
 from ..config import Settings, load_settings
-from ..ethics import load_scope
+from ..ethics import Attestation, Scope, load_scope
 from ..events import Event, EventBus, bus
 from ..orchestrator import Orchestrator
+from ..scanner import detect_local_network
 from ..storage import Store
+
+
+# Hard cap for in-browser network scans. Larger ranges are still fine
+# from the CLI, where the user can hand-edit a scope file, but the
+# web flow caps to keep one-click scans bounded in time and traffic.
+MAX_WEB_SCAN_HOSTS = 1024  # /22
+
+# Default port presets for the network scan form.
+HOME_PORT_PRESETS: dict[str, str] = {
+    "home": "21,22,23,25,53,80,110,143,443,445,548,587,631,993,995,1900,2049,3000,3306,3389,5000,5353,5432,5900,6379,8000,8080,8443,9000,9090,9100,32400",
+    "top1000": "1-1024",
+}
+ATTESTATION_PHRASE = "yes i authorize"
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +81,7 @@ def create_app(
         "/static", StaticFiles(directory=str(STATIC_DIR)), name="static"
     )
 
-    demo_state = _DemoState()
+    pipeline_state = _PipelineState()
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> Any:
@@ -75,7 +93,7 @@ def create_app(
             {
                 "scans": scans,
                 "has_anthropic_key": settings.has_anthropic_key,
-                "demo_running": demo_state.is_running(),
+                "demo_running": pipeline_state.is_running(),
             },
         )
 
@@ -137,25 +155,124 @@ def create_app(
             request, "live.html",
             {
                 "has_anthropic_key": settings.has_anthropic_key,
-                "demo_running": demo_state.is_running(),
+                "demo_running": pipeline_state.is_running(),
             },
         )
 
     @app.post("/demo")
     def trigger_demo(request: Request) -> Any:
-        if not demo_state.is_running():
-            demo_state.start(settings, event_bus)
-        # If the user came from /live, keep them there to watch the stream.
+        if not pipeline_state.is_running():
+            pipeline_state.start(
+                lambda: _run_demo_pipeline(settings, event_bus),
+                event_bus,
+                kind="demo",
+            )
         target = "/live" if request.headers.get("referer", "").endswith("/live") else "/"
         return RedirectResponse(url=target, status_code=303)
 
     @app.get("/demo/status")
     def demo_status() -> dict:
         return {
-            "running": demo_state.is_running(),
-            "last_scan_id": demo_state.last_scan_id,
-            "last_error": demo_state.last_error,
+            "running": pipeline_state.is_running(),
+            "last_scan_id": pipeline_state.last_scan_id,
+            "last_error": pipeline_state.last_error,
+            "kind": pipeline_state.last_kind,
         }
+
+    @app.get("/api/network")
+    def api_network() -> dict:
+        try:
+            net = detect_local_network()
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        return {
+            "ip": net.ip,
+            "cidr": net.cidr,
+            "interface": net.interface,
+            "detection_method": net.detection_method,
+            "host_count": net.network.num_addresses,
+        }
+
+    @app.get("/scan-network", response_class=HTMLResponse)
+    def scan_network_form(request: Request) -> Any:
+        try:
+            detected = detect_local_network()
+            detection_error = None
+        except Exception as e:  # noqa: BLE001
+            detected = None
+            detection_error = str(e)
+        return templates.TemplateResponse(
+            request,
+            "scan_network.html",
+            {
+                "detected": detected,
+                "detection_error": detection_error,
+                "presets": HOME_PORT_PRESETS,
+                "max_hosts": MAX_WEB_SCAN_HOSTS,
+                "has_anthropic_key": settings.has_anthropic_key,
+                "running": pipeline_state.is_running(),
+            },
+        )
+
+    @app.post("/scan-network")
+    def scan_network_start(
+        request: Request,
+        authorized_by: str = Form(...),
+        cidr: str = Form(...),
+        attestation_phrase: str = Form(...),
+        attestation_checkbox: str = Form(""),
+        port_preset: str = Form("home"),
+        custom_ports: str = Form(""),
+    ) -> Any:
+        # Normalize + validate. Server-side checks repeat the front-end
+        # ones because client validation is for UX, not security.
+        authorized_by = authorized_by.strip()
+        cidr = cidr.strip()
+        phrase = attestation_phrase.strip().lower()
+        if not authorized_by:
+            raise HTTPException(400, "Full name is required.")
+        if phrase != ATTESTATION_PHRASE:
+            raise HTTPException(
+                400, f"You must type the phrase '{ATTESTATION_PHRASE}' verbatim."
+            )
+        if attestation_checkbox not in ("on", "true", "1", "yes"):
+            raise HTTPException(400, "You must check the authorization box.")
+
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid CIDR: {e}") from e
+        if network.num_addresses > MAX_WEB_SCAN_HOSTS:
+            raise HTTPException(
+                400,
+                f"Network too large for the web flow "
+                f"({network.num_addresses} hosts > {MAX_WEB_SCAN_HOSTS}). "
+                f"Use the CLI for bigger ranges.",
+            )
+
+        if port_preset == "custom":
+            ports_csv = custom_ports.strip()
+            if not ports_csv:
+                raise HTTPException(400, "Custom port list cannot be empty.")
+        else:
+            ports_csv = HOME_PORT_PRESETS.get(port_preset)
+            if not ports_csv:
+                raise HTTPException(400, f"Unknown port preset: {port_preset}")
+
+        if pipeline_state.is_running():
+            raise HTTPException(
+                409, "Another scan is already running. Wait for it to finish."
+            )
+
+        scope = _scope_from_form(authorized_by, str(network))
+        pipeline_state.start(
+            lambda: _run_network_scan_pipeline(
+                settings, event_bus, scope, str(network), ports_csv,
+            ),
+            event_bus,
+            kind="network",
+        )
+        return RedirectResponse(url="/live", status_code=303)
 
     @app.get("/api/events")
     def event_stream() -> StreamingResponse:
@@ -198,41 +315,131 @@ def _sse_generator(event_bus: EventBus) -> Iterator[bytes]:
         event_bus.unsubscribe(sub)
 
 
-class _DemoState:
-    """In-process flag + background thread for the one-click demo."""
+class _PipelineState:
+    """Generic single-slot runner for any pipeline (demo or real network scan).
+
+    Only one pipeline can run at a time per process, since they share
+    the event bus and SQLite store. The thread emits demo.finished /
+    demo.failed for either kind so the existing /live JS keeps working.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.last_scan_id: int | None = None
         self.last_error: str | None = None
+        self.last_kind: str | None = None  # "demo" | "network"
 
     def is_running(self) -> bool:
         with self._lock:
             return self._thread is not None and self._thread.is_alive()
 
-    def start(self, settings: Settings, event_bus: EventBus) -> None:
+    def start(
+        self,
+        target: Callable[[], int],
+        event_bus: EventBus,
+        *,
+        kind: str,
+    ) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
             self.last_error = None
+            self.last_kind = kind
             self._thread = threading.Thread(
-                target=self._run, args=(settings, event_bus), daemon=True
+                target=self._run, args=(target, event_bus, kind), daemon=True
             )
             self._thread.start()
 
-    def _run(self, settings: Settings, event_bus: EventBus) -> None:
+    def _run(
+        self,
+        target: Callable[[], int],
+        event_bus: EventBus,
+        kind: str,
+    ) -> None:
         try:
-            self.last_scan_id = _run_demo_pipeline(settings, event_bus)
+            self.last_scan_id = target()
         except Exception as e:  # noqa: BLE001
-            logger.exception("demo pipeline failed")
+            logger.exception("%s pipeline failed", kind)
             self.last_error = str(e)
-            event_bus.publish(Event(type="demo.failed", data={"error": str(e)}))
+            event_bus.publish(Event(
+                type="demo.failed",
+                data={"error": str(e), "kind": kind},
+            ))
         else:
             event_bus.publish(Event(
                 type="demo.finished",
-                data={"scan_id": self.last_scan_id},
+                data={"scan_id": self.last_scan_id, "kind": kind},
             ))
+
+
+def _scope_from_form(authorized_by: str, cidr: str) -> Scope:
+    """Build a Scope object directly from the web attestation form.
+
+    No file is written; the scope lives in memory for the duration of
+    the scan. The CLI's init-scope command writes a YAML file to disk;
+    the web flow doesn't, so the user's name + statement aren't
+    persisted beyond the scan's lifetime.
+    """
+    today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    statement = (
+        f"I, {authorized_by}, affirm that I own or have written permission "
+        f"to perform vulnerability scanning against {cidr} as of {today}. "
+        "Submitted via the web dashboard attestation form."
+    )
+    return Scope(
+        classification="lab",
+        cidrs=(ipaddress.ip_network(cidr, strict=False),),
+        attestation=Attestation(
+            authorized_by=authorized_by,
+            date=today,
+            statement=statement,
+        ),
+    )
+
+
+def _run_network_scan_pipeline(
+    settings: Settings,
+    event_bus: EventBus,
+    scope: Scope,
+    cidr: str,
+    ports_csv: str,
+) -> int:
+    """Run the full pipeline against a real network the user authorized."""
+    from ..scanner import parse_ports
+
+    ports = parse_ports(ports_csv)
+    event_bus.publish(Event(
+        type="demo.starting",
+        data={"target": cidr, "kind": "network", "port_count": len(ports)},
+    ))
+
+    store = Store(settings.db_path)
+    audit = AuditLogger(settings.audit_log_path)
+    scan_id = store.create_scan(cidr)
+    context = AgentContext(scan_id=scan_id, scope_target=cidr)
+
+    recon = ReconAgent(
+        scope=scope, store=store, ports=ports,
+        timeout=0.5, workers=64,
+        skip_host_discovery=False,  # use TCP ping sweep
+        scan_method="connect",      # forces userland mode
+        event_bus=event_bus,
+    )
+    enrichment = EnrichmentAgent(
+        store=store, api_key=settings.nvd_api_key,
+        event_bus=event_bus,
+    )
+    agents: list = [recon, enrichment]
+    if settings.has_anthropic_key:
+        agents.append(TriageAgent(
+            store=store, audit=audit, model=settings.triage_model,
+            event_bus=event_bus,
+        ))
+    agents.append(ReporterAgent(scope=scope, event_bus=event_bus))
+
+    Orchestrator(agents, event_bus=event_bus).run(context)
+    return scan_id
 
 
 def _run_demo_pipeline(settings: Settings, event_bus: EventBus) -> int:

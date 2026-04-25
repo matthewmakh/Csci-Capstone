@@ -2,10 +2,13 @@
 {% block title %}Scans{% endblock %}
 {% block content %}
 
-<section class="bg-gradient-to-br from-emerald-50 to-sky-50 border border-emerald-200 rounded-lg p-6 mb-6 flex items-start justify-between flex-wrap gap-4">
-  <div class="max-w-2xl">
-    <h2 class="text-xl font-semibold mb-2">Watch a live demo</h2>
-    <p class="text-sm text-slate-700 mb-1">
+<section class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+  <article class="bg-gradient-to-br from-emerald-50 to-sky-50 border border-emerald-200 rounded-lg p-6 flex flex-col">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs uppercase font-semibold text-emerald-700 tracking-wide">Safe</span>
+      <h2 class="text-lg font-semibold">Watch a live demo</h2>
+    </div>
+    <p class="text-sm text-slate-700 mb-4 flex-1">
       Spins up five deliberately-vulnerable services on your laptop
       (Apache, OpenSSH, vsftpd, Redis, Exim) and runs the full pipeline
       against them
@@ -13,21 +16,35 @@
       You'll watch each agent work in real time and end up with a
       9-finding pentest report.
     </p>
-    {% if not has_anthropic_key %}
-    <p class="text-xs text-amber-700 mt-2">
-      <code>ANTHROPIC_API_KEY</code> not set; the report will still
-      list discovered services and CVEs, but without LLM triage rationale.
+    <div class="flex gap-2 items-center">
+      <a href="/about" class="text-slate-700 hover:text-slate-900 px-3 py-2 text-sm font-medium">
+        How it works
+      </a>
+      <a href="/live" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg shadow text-sm font-semibold ml-auto">
+        Open live view &rarr;
+      </a>
+    </div>
+  </article>
+
+  <article class="bg-gradient-to-br from-amber-50 to-rose-50 border border-amber-300 rounded-lg p-6 flex flex-col">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs uppercase font-semibold text-amber-700 tracking-wide">Real network</span>
+      <h2 class="text-lg font-semibold">Scan your own LAN</h2>
+    </div>
+    <p class="text-sm text-slate-700 mb-2 flex-1">
+      Auto-detects the network your laptop is sitting on, asks you to
+      sign an attestation, then runs the same pipeline against your
+      home / lab IP range. Capped at {{ 1024 }} hosts in the web flow.
     </p>
-    {% endif %}
-  </div>
-  <div class="flex gap-2 items-center">
-    <a href="/about" class="text-slate-700 hover:text-slate-900 px-4 py-2 text-sm font-medium">
-      How it works &rarr;
-    </a>
-    <a href="/live" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg shadow text-sm font-semibold">
-      Open live view &rarr;
-    </a>
-  </div>
+    <p class="text-xs text-amber-800 mb-4">
+      Requires written authorization for the target network — see the form for details.
+    </p>
+    <div class="flex gap-2 items-center justify-end">
+      <a href="/scan-network" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg shadow text-sm font-semibold">
+        Set up a network scan &rarr;
+      </a>
+    </div>
+  </article>
 </section>
 
 <section class="bg-white rounded-lg shadow">
