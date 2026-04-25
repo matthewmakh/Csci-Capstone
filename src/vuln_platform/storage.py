@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .models import CVE, Finding, Host
+from .models import CVE, AttackChain, ChainHop, Finding, Host
 
 
 SCHEMA = """
@@ -36,7 +36,21 @@ CREATE TABLE IF NOT EXISTS cves (
     cvss_score REAL,
     cvss_severity TEXT,
     published TEXT,
-    references_json TEXT NOT NULL DEFAULT '[]'
+    references_json TEXT NOT NULL DEFAULT '[]',
+    exploit_references_json TEXT NOT NULL DEFAULT '[]',
+    patch_references_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS attack_chains (
+    id INTEGER PRIMARY KEY,
+    scan_id INTEGER NOT NULL REFERENCES scans(id),
+    title TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    prerequisites TEXT NOT NULL,
+    impact TEXT NOT NULL,
+    hops_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS findings (
@@ -78,6 +92,25 @@ class Store:
     def _init_schema(self) -> None:
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            # Lightweight migrations for existing DBs predating new columns.
+            self._add_column_if_missing(
+                conn, "cves", "exploit_references_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            self._add_column_if_missing(
+                conn, "cves", "patch_references_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+
+    @staticmethod
+    def _add_column_if_missing(
+        conn: sqlite3.Connection, table: str, column: str, decl: str,
+    ) -> None:
+        cols = [
+            row["name"] for row in conn.execute(f"PRAGMA table_info({table})")
+        ]
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def create_scan(self, scope_target: str) -> int:
         with self._conn() as conn:
@@ -100,8 +133,9 @@ class Store:
         with self._conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO cves "
-                "(cve_id, description, cvss_score, cvss_severity, published, references_json) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(cve_id, description, cvss_score, cvss_severity, published, "
+                " references_json, exploit_references_json, patch_references_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cve.cve_id,
                     cve.description,
@@ -109,6 +143,8 @@ class Store:
                     cve.cvss_severity,
                     cve.published.isoformat() if cve.published else None,
                     json.dumps(cve.references),
+                    json.dumps(cve.exploit_references),
+                    json.dumps(cve.patch_references),
                 ),
             )
 
@@ -126,7 +162,54 @@ class Store:
             cvss_severity=row["cvss_severity"],
             published=row["published"],
             references=json.loads(row["references_json"]),
+            exploit_references=json.loads(
+                row["exploit_references_json"] if "exploit_references_json" in row.keys() else "[]"
+            ),
+            patch_references=json.loads(
+                row["patch_references_json"] if "patch_references_json" in row.keys() else "[]"
+            ),
         )
+
+    def save_chain(self, scan_id: int, chain: AttackChain) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO attack_chains "
+                "(scan_id, title, severity, confidence, rationale, "
+                " prerequisites, impact, hops_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scan_id,
+                    chain.title,
+                    chain.severity,
+                    chain.confidence,
+                    chain.rationale,
+                    chain.prerequisites,
+                    chain.impact,
+                    json.dumps([h.model_dump() for h in chain.hops]),
+                ),
+            )
+
+    def list_chains(self, scan_id: int) -> list[AttackChain]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM attack_chains WHERE scan_id = ? "
+                "ORDER BY CASE severity "
+                "  WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
+                "  WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, id",
+                (scan_id,),
+            ).fetchall()
+        return [
+            AttackChain(
+                title=r["title"],
+                severity=r["severity"],
+                confidence=r["confidence"],
+                rationale=r["rationale"],
+                prerequisites=r["prerequisites"],
+                impact=r["impact"],
+                hops=[ChainHop(**h) for h in json.loads(r["hops_json"])],
+            )
+            for r in rows
+        ]
 
     def save_finding(self, scan_id: int, finding: Finding) -> None:
         with self._conn() as conn:

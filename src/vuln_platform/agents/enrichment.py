@@ -150,11 +150,23 @@ def _parse_nvd_response(payload: dict[str, Any]) -> list[CVE]:
         score, severity = _extract_cvss(cve_obj.get("metrics", {}))
         published_raw = cve_obj.get("published")
         published = _parse_date(published_raw)
-        references = [
-            r.get("url", "")
-            for r in cve_obj.get("references", [])
-            if r.get("url")
-        ][:10]
+        # NVD references carry tags ("Exploit", "Patch", "Vendor Advisory",
+        # etc.). Keep the full list, plus extract two tagged subsets the
+        # UI can promote to badges and direct links.
+        all_refs: list[str] = []
+        exploit_refs: list[str] = []
+        patch_refs: list[str] = []
+        for r in cve_obj.get("references", []):
+            url = r.get("url")
+            if not url:
+                continue
+            if len(all_refs) < 10:
+                all_refs.append(url)
+            tags = r.get("tags") or []
+            if "Exploit" in tags:
+                exploit_refs.append(url)
+            if "Patch" in tags:
+                patch_refs.append(url)
         results.append(
             CVE(
                 cve_id=cve_id,
@@ -162,7 +174,9 @@ def _parse_nvd_response(payload: dict[str, Any]) -> list[CVE]:
                 cvss_score=score,
                 cvss_severity=severity,
                 published=published,
-                references=references,
+                references=all_refs,
+                exploit_references=exploit_refs[:5],
+                patch_references=patch_refs[:5],
             )
         )
     return results
@@ -219,6 +233,8 @@ def _load_seed(path: Path) -> dict[str, list[CVE]]:
                     cvss_severity=entry.get("cvss_severity"),
                     published=_parse_date(entry.get("published")),
                     references=list(entry.get("references", []))[:10],
+                    exploit_references=list(entry.get("exploit_references", []))[:5],
+                    patch_references=list(entry.get("patch_references", []))[:5],
                 ))
             except (KeyError, TypeError) as e:
                 logger.warning(

@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..agents import (
     AgentContext,
+    ChainAnalysisAgent,
     EnrichmentAgent,
     ReconAgent,
     ReporterAgent,
@@ -105,6 +106,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="scan not found")
         hosts = store.list_hosts(scan_id)
         findings = store.list_findings(scan_id)
+        chains = store.list_chains(scan_id)
+        # Look each finding's CVE up so we can show exploit/patch links.
+        cves_by_id: dict[str, Any] = {}
+        for f in findings:
+            if f.cve_id not in cves_by_id:
+                cve = store.get_cve(f.cve_id)
+                if cve is not None:
+                    cves_by_id[f.cve_id] = cve
         scope = _placeholder_scope(scan["scope_target"])
         report_md = render_report(
             scope=scope,
@@ -112,6 +121,7 @@ def create_app(
             findings=findings,
             hosts=hosts,
             cves_by_service=None,
+            chains=chains,
         )
         report_html = md_lib.markdown(
             report_md, extensions=["tables", "fenced_code"]
@@ -125,6 +135,7 @@ def create_app(
         # can deep-link to the exact LLM call that produced it.
         audit_by_cve = _index_audit_by_cve(settings.audit_log_path)
 
+        topology = topology_layout(hosts, findings, chains)
         return templates.TemplateResponse(
             request,
             "scan.html",
@@ -135,6 +146,9 @@ def create_app(
                 "findings_by_severity": dict(findings_by_severity),
                 "report_html": report_html,
                 "audit_by_cve": audit_by_cve,
+                "chains": chains,
+                "cves_by_id": cves_by_id,
+                "topology": topology,
             },
         )
 
@@ -436,6 +450,10 @@ def _run_network_scan_pipeline(
             store=store, audit=audit, model=settings.triage_model,
             event_bus=event_bus,
         ))
+        agents.append(ChainAnalysisAgent(
+            store=store, audit=audit, model=settings.triage_model,
+            event_bus=event_bus,
+        ))
     agents.append(ReporterAgent(scope=scope, event_bus=event_bus))
 
     Orchestrator(agents, event_bus=event_bus).run(context)
@@ -570,6 +588,126 @@ def parse_cvss_vector(vector: str) -> list[dict[str, str]]:
                 "value": options.get(val, val),
             })
     return out
+
+
+# --- network topology layout -----------------------------------------
+
+# Severity → SVG fill color. Maps to the same palette used for finding
+# badges so the topology view reads consistently with the rest of the UI.
+_SEVERITY_FILL = {
+    "critical": "#ef4444",  # red-500
+    "high":     "#f97316",  # orange-500
+    "medium":   "#f59e0b",  # amber-500
+    "low":      "#0ea5e9",  # sky-500
+    "info":     "#94a3b8",  # slate-400
+    None:       "#cbd5e1",  # slate-300 (no findings)
+}
+
+
+def topology_layout(
+    hosts: list,
+    findings: list,
+    chains: list,
+) -> dict:
+    """Compute SVG node + edge coordinates for the scan's topology graph.
+
+    Layout strategy:
+    - Each host is a labeled circle laid out in a grid (square-ish).
+    - Around each host, its open services orbit in a ring.
+    - Service nodes are colored by the worst finding severity on them.
+    - Attack-chain hops are overlaid as dashed arrows.
+
+    Returned dict is JSON-safe and consumed directly by the Jinja
+    template (no per-element math in the .html).
+    """
+    import math
+
+    if not hosts:
+        return {"width": 0, "height": 0, "hosts": [], "chain_paths": []}
+
+    # Index findings by (host, port) -> worst severity for fast lookup.
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+    worst: dict[tuple[str, int], str] = {}
+    for f in findings:
+        key = (str(f.host_ip), f.port)
+        cur = worst.get(key)
+        if cur is None or sev_rank.get(f.severity, 0) > sev_rank.get(cur, 0):
+            worst[key] = f.severity
+
+    # Per-host service-ring radius scales with port count so dense
+    # hosts don't overlap their own labels.
+    cols = max(1, math.ceil(math.sqrt(len(hosts))))
+    cell_w = 320
+    cell_h = 320
+    rows = math.ceil(len(hosts) / cols)
+    width = cols * cell_w
+    height = rows * cell_h
+
+    host_layout: list[dict] = []
+    # Service node centers indexed by (host_ip, port) so chain edges can
+    # find them.
+    svc_centers: dict[tuple[str, int], tuple[float, float]] = {}
+
+    for idx, host in enumerate(hosts):
+        col = idx % cols
+        row = idx // cols
+        cx = col * cell_w + cell_w / 2
+        cy = row * cell_h + cell_h / 2
+        ip = str(host.ip)
+
+        n_ports = len(host.open_ports) or 1
+        # Bigger ring for more services, capped so labels stay readable.
+        ring_r = min(120, 50 + n_ports * 8)
+
+        services: list[dict] = []
+        for j, port in enumerate(host.open_ports):
+            angle = (2 * math.pi * j) / n_ports - (math.pi / 2)
+            sx = cx + ring_r * math.cos(angle)
+            sy = cy + ring_r * math.sin(angle)
+            sev = worst.get((ip, port.number))
+            label = port.service.name if port.service else "?"
+            version = port.service.version if port.service else None
+            services.append({
+                "x": sx, "y": sy,
+                "port": port.number,
+                "label": label,
+                "version": version,
+                "severity": sev,
+                "fill": _SEVERITY_FILL.get(sev, _SEVERITY_FILL[None]),
+            })
+            svc_centers[(ip, port.number)] = (sx, sy)
+
+        host_layout.append({
+            "ip": ip,
+            "x": cx, "y": cy,
+            "services": services,
+            "ring_radius": ring_r,
+        })
+
+    # Build dashed-arrow paths for each attack chain hop.
+    chain_paths: list[dict] = []
+    for chain_idx, chain in enumerate(chains or []):
+        for i in range(len(chain.hops) - 1):
+            src = chain.hops[i]
+            dst = chain.hops[i + 1]
+            src_pt = svc_centers.get((src.host_ip, src.port))
+            dst_pt = svc_centers.get((dst.host_ip, dst.port))
+            if src_pt is None or dst_pt is None:
+                continue
+            chain_paths.append({
+                "x1": src_pt[0], "y1": src_pt[1],
+                "x2": dst_pt[0], "y2": dst_pt[1],
+                "chain_index": chain_idx,
+                "title": chain.title,
+                "stroke": _SEVERITY_FILL.get(chain.severity, "#475569"),
+            })
+
+    return {
+        "width": width,
+        "height": height,
+        "hosts": host_layout,
+        "chain_paths": chain_paths,
+    }
 
 
 def _placeholder_scope(target: str) -> Any:

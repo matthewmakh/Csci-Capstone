@@ -1,5 +1,5 @@
 {
-  "_comment": "Pre-fetched CVE data for the demo target so the pipeline produces findings even when the NVD API is rate-limited or unreachable. Keys are normalized 'service version' strings (lowercase, single-spaced).",
+  "_comment": "Pre-fetched CVE data for the demo target. Keys are normalized 'service version' strings (lowercase, single-spaced). exploit_references / patch_references mirror what NVD exposes via the references[].tags field — Exploit and Patch tagged URLs.",
 
   "apache 2.4.49": [
     {
@@ -11,6 +11,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2021-41773",
         "https://httpd.apache.org/security/vulnerabilities_24.html"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/50383",
+        "https://github.com/blasty/CVE-2021-41773"
+      ],
+      "patch_references": [
+        "https://httpd.apache.org/security/vulnerabilities_24.html#CVE-2021-41773"
       ]
     },
     {
@@ -22,6 +29,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2021-42013",
         "https://httpd.apache.org/security/vulnerabilities_24.html"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/50406",
+        "https://github.com/RootUp/PersonalStuff/blob/master/http_server_putscan.py"
+      ],
+      "patch_references": [
+        "https://httpd.apache.org/security/vulnerabilities_24.html#CVE-2021-42013"
       ]
     }
   ],
@@ -36,6 +50,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2018-15473",
         "https://www.openssh.com/txt/release-7.8"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/45233",
+        "https://github.com/Rhynorater/CVE-2018-15473-Exploit"
+      ],
+      "patch_references": [
+        "https://www.openssh.com/txt/release-7.8"
       ]
     },
     {
@@ -46,6 +67,10 @@
       "published": "2018-01-21T22:29:00+00:00",
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2016-10708"
+      ],
+      "exploit_references": [],
+      "patch_references": [
+        "https://www.openssh.com/txt/release-7.4"
       ]
     }
   ],
@@ -60,6 +85,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2011-2523",
         "https://scarybeastsecurity.blogspot.com/2011/07/alert-vsftpd-download-backdoored.html"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/49757",
+        "https://www.rapid7.com/db/modules/exploit/unix/ftp/vsftpd_234_backdoor/"
+      ],
+      "patch_references": [
+        "https://security.appspot.com/vsftpd.html"
       ]
     }
   ],
@@ -74,6 +106,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2022-0543",
         "https://www.ubercomp.com/posts/2022-01-20_redis_on_debian_rce"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/50749",
+        "https://github.com/aodsec/CVE-2022-0543"
+      ],
+      "patch_references": [
+        "https://security-tracker.debian.org/tracker/CVE-2022-0543"
       ]
     },
     {
@@ -84,6 +123,10 @@
       "published": "2018-06-18T17:29:00+00:00",
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2018-12453"
+      ],
+      "exploit_references": [],
+      "patch_references": [
+        "https://github.com/antirez/redis/commit/52a00201fa67bbc40c5cf67e8a8b178b330adcae"
       ]
     }
   ],
@@ -98,6 +141,12 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2019-15846",
         "https://www.openwall.com/lists/oss-security/2019/09/06/3"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/47307"
+      ],
+      "patch_references": [
+        "https://github.com/Exim/exim/commit/d6c86a224f89adcb1e62e98d96bb5d9b4ec5dc18"
       ]
     },
     {
@@ -109,6 +158,13 @@
       "references": [
         "https://nvd.nist.gov/vuln/detail/CVE-2019-10149",
         "https://www.qualys.com/2019/06/05/cve-2019-10149/return-wizard-rce-exim.txt"
+      ],
+      "exploit_references": [
+        "https://www.exploit-db.com/exploits/46974",
+        "https://www.rapid7.com/db/modules/exploit/linux/local/exim4_deliver_message_priv_esc/"
+      ],
+      "patch_references": [
+        "https://exim.org/static/doc/security/CVE-2019-10149.txt"
       ]
     }
   ]

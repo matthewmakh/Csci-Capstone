@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .agents import (
     AgentContext,
+    ChainAnalysisAgent,
     EnrichmentAgent,
     ReconAgent,
     ReporterAgent,
@@ -218,6 +219,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 return 2
             agents.append(
                 TriageAgent(store=store, audit=audit, model=settings.triage_model)
+            )
+            # Chain analysis runs after Triage so it can reason over the
+            # full triaged finding set. Skipped automatically when there
+            # are too few findings to chain.
+            agents.append(
+                ChainAnalysisAgent(
+                    store=store, audit=audit, model=settings.triage_model,
+                )
             )
         agents.append(reporter)
 

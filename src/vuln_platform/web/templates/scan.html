@@ -26,6 +26,147 @@
   </div>
 </header>
 
+{% if topology and topology.hosts %}
+<section class="bg-white rounded-lg shadow mb-6">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
+    <h3 class="text-lg font-semibold">
+      Network Topology
+      <span class="info-tip" data-tip="Each host is shown as a labeled circle. Its open services orbit around it. Service color = worst finding severity on that port. Dashed arrows are attack-chain hops from the Chain Analysis agent.">[?]</span>
+    </h3>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#ef4444"></span>critical</span>
+      <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#f97316"></span>high</span>
+      <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#f59e0b"></span>medium</span>
+      <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#0ea5e9"></span>low</span>
+      <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full" style="background:#cbd5e1"></span>none</span>
+    </div>
+  </div>
+  <div class="p-4 overflow-x-auto">
+    <svg viewBox="0 0 {{ topology.width }} {{ topology.height }}"
+         class="w-full h-auto" style="max-height: 600px;"
+         xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+          <polygon points="0 0, 10 4, 0 8" fill="#475569"/>
+        </marker>
+      </defs>
+
+      {# Host rings + spokes to services. Drawn first so labels overlay. #}
+      {% for host in topology.hosts %}
+        <circle cx="{{ host.x }}" cy="{{ host.y }}" r="{{ host.ring_radius }}"
+                fill="none" stroke="#e2e8f0" stroke-width="1.5"
+                stroke-dasharray="3 3"/>
+        {% for svc in host.services %}
+          <line x1="{{ host.x }}" y1="{{ host.y }}"
+                x2="{{ svc.x }}" y2="{{ svc.y }}"
+                stroke="#cbd5e1" stroke-width="1"/>
+        {% endfor %}
+      {% endfor %}
+
+      {# Chain arrows on top of host/service edges. #}
+      {% for path in topology.chain_paths %}
+        <line x1="{{ path.x1 }}" y1="{{ path.y1 }}"
+              x2="{{ path.x2 }}" y2="{{ path.y2 }}"
+              stroke="{{ path.stroke }}" stroke-width="2"
+              stroke-dasharray="6 4" marker-end="url(#arrow)"
+              opacity="0.8">
+          <title>{{ path.title }}</title>
+        </line>
+      {% endfor %}
+
+      {# Host nodes (drawn after edges so they sit on top). #}
+      {% for host in topology.hosts %}
+        <circle cx="{{ host.x }}" cy="{{ host.y }}" r="26"
+                fill="#0f172a" stroke="white" stroke-width="3"/>
+        <text x="{{ host.x }}" y="{{ host.y + 4 }}" text-anchor="middle"
+              font-size="11" font-weight="600" fill="white"
+              font-family="ui-monospace, monospace">{{ host.ip }}</text>
+      {% endfor %}
+
+      {# Service nodes + labels. #}
+      {% for host in topology.hosts %}
+        {% for svc in host.services %}
+          <g>
+            <title>{{ svc.label }} {{ svc.version or '' }} on port {{ svc.port }}{% if svc.severity %} — worst severity: {{ svc.severity }}{% endif %}</title>
+            <circle cx="{{ svc.x }}" cy="{{ svc.y }}" r="13"
+                    fill="{{ svc.fill }}" stroke="white" stroke-width="2"/>
+            <text x="{{ svc.x }}" y="{{ svc.y + 3 }}" text-anchor="middle"
+                  font-size="9" font-weight="700" fill="white">{{ svc.port }}</text>
+            <text x="{{ svc.x }}" y="{{ svc.y + 28 }}" text-anchor="middle"
+                  font-size="10" fill="#334155">
+              {{ svc.label }}{% if svc.version %} {{ svc.version }}{% endif %}
+            </text>
+          </g>
+        {% endfor %}
+      {% endfor %}
+    </svg>
+  </div>
+  {% if topology.chain_paths %}
+  <p class="px-6 pb-4 text-xs text-slate-500">
+    Dashed arrows are attack-chain hops — hover an arrow to see the chain title.
+    See the Attack Paths section below for full reasoning.
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if chains %}
+<section class="bg-white rounded-lg shadow mb-6 border-l-4 border-rose-500">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
+    <h3 class="text-lg font-semibold">
+      Attack Paths
+      <span class="info-tip" data-tip="The Chain Analysis agent runs after Triage. It reads ALL findings together and asks Claude to identify how individual CVEs combine into multi-step attacks. The capstone-defendable 'agentic' part: the LLM reasons over its own previous outputs.">[?]</span>
+    </h3>
+    <span class="text-xs text-slate-500">{{ chains|length }} chain{{ '' if chains|length == 1 else 's' }} identified</span>
+  </div>
+  <div class="divide-y">
+    {% for chain in chains %}
+    {% set sev_color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky'}[chain.severity] %}
+    {% set conf_color = {'high': 'emerald', 'medium': 'amber', 'low': 'slate'}[chain.confidence] %}
+    <article class="p-6">
+      <header class="flex flex-wrap items-center gap-3 mb-3">
+        <h4 class="text-base font-semibold">{{ chain.title }}</h4>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-{{ sev_color }}-100 text-{{ sev_color }}-800 text-xs font-semibold uppercase">
+          {{ chain.severity }}
+        </span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-{{ conf_color }}-100 text-{{ conf_color }}-800 text-xs font-medium">
+          {{ chain.confidence }} confidence
+        </span>
+      </header>
+
+      <ol class="space-y-2 mb-4">
+        {% for hop in chain.hops %}
+        <li class="flex items-start gap-3">
+          <span class="flex-shrink-0 mt-0.5 inline-flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-700 text-xs font-bold">{{ loop.index }}</span>
+          <div class="flex-1 text-sm">
+            <span class="font-mono text-emerald-700"><a href="https://nvd.nist.gov/vuln/detail/{{ hop.cve_id }}" target="_blank" rel="noopener" class="hover:underline">{{ hop.cve_id }}</a></span>
+            <span class="text-slate-500">on</span>
+            <span class="font-mono">{{ hop.host_ip }}:{{ hop.port }}</span>
+            <div class="text-slate-700 mt-0.5">{{ hop.action }}</div>
+            <div class="text-xs text-slate-500 italic mt-0.5">→ {{ hop.capability_gained }}</div>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+
+      <div class="bg-slate-50 border-l-4 border-emerald-400 p-3 rounded mb-2">
+        <p class="text-xs font-semibold text-slate-500 uppercase mb-1">Why this works</p>
+        <p class="text-sm">{{ chain.rationale }}</p>
+      </div>
+      <div class="bg-amber-50 border-l-4 border-amber-400 p-3 rounded mb-2">
+        <p class="text-xs font-semibold text-slate-500 uppercase mb-1">Prerequisites</p>
+        <p class="text-sm">{{ chain.prerequisites }}</p>
+      </div>
+      <div class="bg-rose-50 border-l-4 border-rose-400 p-3 rounded">
+        <p class="text-xs font-semibold text-slate-500 uppercase mb-1">If this chain succeeds</p>
+        <p class="text-sm">{{ chain.impact }}</p>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 {% if hosts %}
 <section class="bg-white rounded-lg shadow mb-6">
   <div class="px-6 py-4 border-b">
@@ -73,6 +214,7 @@
   {% for f in findings %}
   {% set color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky', 'info': 'slate'}[f.severity] %}
   {% set audit = audit_by_cve.get(f.cve_id) %}
+  {% set cve = cves_by_id.get(f.cve_id) %}
   <article class="border-t p-6">
     <header class="flex flex-wrap items-center gap-3 mb-3">
       <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 text-xs font-semibold uppercase">
@@ -80,6 +222,18 @@
       </span>
       <a href="https://nvd.nist.gov/vuln/detail/{{ f.cve_id }}" target="_blank" rel="noopener"
          class="font-mono font-semibold text-emerald-700 hover:underline">{{ f.cve_id }}</a>
+      {% if cve and cve.exploit_references %}
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-xs font-semibold"
+              title="Public exploit references on file">
+          ⚡ Public exploit ({{ cve.exploit_references|length }})
+        </span>
+      {% endif %}
+      {% if cve and cve.patch_references %}
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold"
+              title="Vendor patch reference">
+          🩹 Patch available
+        </span>
+      {% endif %}
       <span class="text-sm text-slate-500">on</span>
       <span class="font-mono">{{ f.host_ip }}:{{ f.port }}</span>
       <span class="text-sm text-slate-500">({{ f.service_name }} {{ f.service_version or '' }})</span>
@@ -104,6 +258,37 @@
       <p class="text-xs font-semibold text-slate-500 uppercase mb-1">Recommended action</p>
       <p class="text-sm">{{ f.recommended_action }}</p>
     </div>
+
+    {% if cve and (cve.exploit_references or cve.patch_references) %}
+    <div class="grid md:grid-cols-2 gap-3 mb-3">
+      {% if cve.exploit_references %}
+      <div class="bg-rose-50 border border-rose-200 p-3 rounded">
+        <p class="text-xs font-semibold text-rose-700 uppercase mb-2">⚡ Known public exploits</p>
+        <ul class="space-y-1 text-xs">
+          {% for url in cve.exploit_references %}
+          <li>
+            <a href="{{ url }}" target="_blank" rel="noopener"
+               class="text-rose-700 hover:underline break-all">{{ url }}</a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if cve.patch_references %}
+      <div class="bg-emerald-50 border border-emerald-200 p-3 rounded">
+        <p class="text-xs font-semibold text-emerald-700 uppercase mb-2">🩹 Vendor patches</p>
+        <ul class="space-y-1 text-xs">
+          {% for url in cve.patch_references %}
+          <li>
+            <a href="{{ url }}" target="_blank" rel="noopener"
+               class="text-emerald-700 hover:underline break-all">{{ url }}</a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <details class="text-sm group">
       <summary class="cursor-pointer text-emerald-700 hover:underline select-none">

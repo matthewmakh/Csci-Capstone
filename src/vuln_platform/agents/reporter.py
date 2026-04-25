@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from ..ethics import Scope
-from ..models import CVE, Finding, Host
+from ..models import CVE, AttackChain, Finding, Host
 from .base import AgentContext, BaseAgent
 
 if TYPE_CHECKING:
@@ -34,6 +34,7 @@ class ReporterAgent(BaseAgent):
             findings=context.findings,
             hosts=context.hosts,
             cves_by_service=context.cves_by_service,
+            chains=context.chains,
         )
         self.emit("reporter.done", scan_id=context.scan_id)
         return context
@@ -46,6 +47,7 @@ def render_report(
     findings: list[Finding],
     hosts: list[Host] | None = None,
     cves_by_service: dict[str, list[CVE]] | None = None,
+    chains: list[AttackChain] | None = None,
 ) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     counts = _severity_counts(findings)
@@ -130,6 +132,37 @@ def render_report(
                     f"| {banner_preview} | {cve_cell} |"
                 )
         lines.append("")
+
+    # Attack paths from the Chain Analysis agent
+    if chains:
+        lines.append("## Attack Paths")
+        lines.append("")
+        lines.append(
+            "Multi-CVE exploitation chains identified by the Chain Analysis "
+            "agent (a second LLM pass that reads all findings together)."
+        )
+        lines.append("")
+        for i, chain in enumerate(chains, 1):
+            lines.append(
+                f"### {i}. {chain.title}  "
+                f"<sub>severity **{chain.severity}** &middot; "
+                f"confidence **{chain.confidence}**</sub>"
+            )
+            lines.append("")
+            lines.append(f"**Rationale:** {chain.rationale}")
+            lines.append("")
+            lines.append(f"**Prerequisites:** {chain.prerequisites}")
+            lines.append("")
+            lines.append(f"**Impact:** {chain.impact}")
+            lines.append("")
+            lines.append("**Hops:**")
+            lines.append("")
+            for j, hop in enumerate(chain.hops, 1):
+                lines.append(
+                    f"{j}. `{hop.cve_id}` on `{hop.host_ip}:{hop.port}` "
+                    f"&mdash; {hop.action} → *{hop.capability_gained}*"
+                )
+            lines.append("")
 
     # Findings summary table
     lines.append("## Findings Summary")

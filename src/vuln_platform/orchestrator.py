@@ -22,7 +22,7 @@ class Orchestrator:
 
     # Agents whose failure should NOT halt the pipeline. We still want
     # the Reporter to render whatever data the upstream agents produced.
-    _NON_FATAL_AGENTS = frozenset({"triage", "enrichment"})
+    _NON_FATAL_AGENTS = frozenset({"triage", "enrichment", "chains"})
 
     def run(self, context: AgentContext) -> AgentContext:
         agent_names = [a.name for a in self.agents]

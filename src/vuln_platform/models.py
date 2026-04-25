@@ -47,6 +47,11 @@ class CVE(BaseModel):
     cvss_severity: Severity | None = None
     published: datetime | None = None
     references: list[str] = Field(default_factory=list)
+    # NVD tags references with categories; we surface "Exploit" and
+    # "Patch" tagged URLs as first-class fields so the UI can show
+    # "known public exploit" badges and link directly to fixes.
+    exploit_references: list[str] = Field(default_factory=list)
+    patch_references: list[str] = Field(default_factory=list)
 
 
 class Finding(BaseModel):
@@ -68,3 +73,30 @@ class Finding(BaseModel):
     exploit_likelihood: Literal["high", "medium", "low", "unknown"]
     rationale: str
     recommended_action: str
+
+
+class ChainHop(BaseModel):
+    """One step in an attack chain — leveraging a single CVE to gain capability."""
+
+    cve_id: str
+    host_ip: str
+    port: int
+    action: str              # "Exploit unauth path traversal to upload PHP webshell"
+    capability_gained: str   # "Remote code execution as www-data"
+
+
+class AttackChain(BaseModel):
+    """Multi-CVE exploitation path the Chain Analysis agent identifies.
+
+    Output of a second LLM pass that reads ALL findings together and
+    reasons about how they combine. The capstone-defendable claim
+    underlying the whole 'agentic' framing.
+    """
+
+    title: str               # "FTP backdoor → SSH brute force → root pivot"
+    severity: Severity       # combined severity, often higher than any single hop
+    confidence: Literal["high", "medium", "low"]
+    rationale: str           # why this chain is realistic
+    prerequisites: str       # what must be true for the chain to succeed
+    impact: str              # what an attacker achieves at the end
+    hops: list[ChainHop]     # ordered steps

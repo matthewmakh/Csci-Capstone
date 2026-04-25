@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from ..events import Event, EventBus
-from ..models import CVE, Finding, Host
+from ..models import CVE, AttackChain, Finding, Host
 
 
 @dataclass
@@ -25,6 +25,7 @@ class AgentContext:
     # Keyed by "service_name service_version" (version may be empty).
     cves_by_service: dict[str, list[CVE]] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
+    chains: list[AttackChain] = field(default_factory=list)
     report_markdown: str | None = None
 
 
