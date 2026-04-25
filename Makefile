@@ -1,4 +1,4 @@
-.PHONY: setup install test demo web scan scan-home discover clean help
+.PHONY: setup install venv test demo web scan scan-home discover clean help
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -19,39 +19,45 @@ help:
 	@echo "  make test      - run pytest"
 	@echo "  make clean     - remove venv, caches, db, and audit log"
 
+# Create the virtualenv if missing. File-based target so make only
+# rebuilds it when .venv/bin/activate is gone.
+$(VENV)/bin/activate:
+	python3 -m venv $(VENV)
+	@$(VENV)/bin/python -m pip install --upgrade pip --quiet
+
+# Editable install. Phony — runs every time install is requested, but
+# pip install -e on an already-installed package is a near-instant
+# no-op, so this is cheap. Every user-facing target depends on this so
+# the package is always present when commands run.
+install: $(VENV)/bin/activate
+	@$(PIP) install -e '.[dev,web]' --quiet
+
 # One-shot bootstrap. Idempotent — safe to re-run.
-setup: $(VENV)/bin/activate install
+setup: install
 	@$(PY) scripts/configure_env.py
 	@$(PY) -m pytest -q
 	@echo ""
 	@echo "Setup complete. Try:  make demo  (or: make web)"
 
-$(VENV)/bin/activate:
-	python3 -m venv $(VENV)
-	@$(VENV)/bin/python -m pip install --upgrade pip --quiet
-
-install: $(VENV)/bin/activate
-	@$(PIP) install -e '.[dev,web]' --quiet
-
-test: $(VENV)/bin/activate
+test: install
 	$(PY) -m pytest
 
-demo: $(VENV)/bin/activate
+demo: install
 	$(PY) -m vuln_platform demo
 
-web: $(VENV)/bin/activate
+web: install
 	$(PY) -m vuln_platform web
 
-scan: $(VENV)/bin/activate
+scan: install
 	$(PY) -m vuln_platform scan --scope-file examples/scope.example.yaml $(ARGS)
 
-discover: $(VENV)/bin/activate
+discover: install
 	@$(PY) -m vuln_platform discover
 
 # Two-step home scan: generate a scope file (interactive attestation),
 # then scan the detected LAN with the default port list. Re-running
 # skips the prompt if home-scope.yaml already exists.
-scan-home: $(VENV)/bin/activate
+scan-home: install
 	@if [ ! -f home-scope.yaml ]; then \
 		$(PY) -m vuln_platform init-scope --output home-scope.yaml || exit $$?; \
 	else \
