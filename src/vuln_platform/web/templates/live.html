@@ -332,63 +332,49 @@
   }
 
   // ---- SSE wiring ---------------------------------------------------
+  // Single dispatcher: every event arrives as a default "message" event
+  // (server doesn't send `event: <type>` lines), so onmessage sees them
+  // all and we route on event.type from the JSON payload.
   const source = new EventSource("/api/events");
 
   source.onmessage = (msg) => {
     let event;
     try { event = JSON.parse(msg.data); } catch (e) { return; }
     appendRaw(event);
+    dispatch(event);
+  };
+  source.onerror = () => { /* EventSource auto-reconnects */ };
+
+  function dispatch(event) {
+    // Pipeline-level transitions update the stage diagram.
+    if (event.type === "pipeline.agent_started") {
+      setStageStatus(event.data.agent, "running");
+    } else if (event.type === "pipeline.agent_finished") {
+      setStageStatus(event.data.agent, "done");
+    } else if (event.type === "pipeline.agent_failed") {
+      setStageStatus(event.data.agent, "failed");
+    } else if (event.type === "demo.finished") {
+      finishDemo(event.data.scan_id);
+    } else if (event.type === "demo.failed") {
+      failDemo(event.data.error);
+    }
+    // Anything with a friendly translation goes into the timeline.
     const f = friendly(event);
     if (f) appendEntry(f);
-  };
+  }
 
-  source.addEventListener("pipeline.agent_started", (e) => {
-    const evt = JSON.parse(e.data);
-    appendRaw(evt);
-    setStageStatus(evt.data.agent, "running");
-  });
-  source.addEventListener("pipeline.agent_finished", (e) => {
-    const evt = JSON.parse(e.data);
-    appendRaw(evt);
-    setStageStatus(evt.data.agent, "done");
-  });
-  source.addEventListener("pipeline.agent_failed", (e) => {
-    const evt = JSON.parse(e.data);
-    appendRaw(evt);
-    setStageStatus(evt.data.agent, "failed");
-    const f = friendly(evt);
-    if (f) appendEntry(f);
-  });
-
-  source.addEventListener("demo.finished", (e) => {
-    const evt = JSON.parse(e.data);
-    appendRaw(evt);
-    const f = friendly(evt);
-    if (f) appendEntry(f);
-    if (evt.data.scan_id) {
-      viewScanLink.href = `/scans/${evt.data.scan_id}`;
+  function finishDemo(scanId) {
+    if (scanId) {
+      viewScanLink.href = `/scans/${scanId}`;
       completionSummary.textContent =
-        `Scan #${evt.data.scan_id} produced a full report. Click below to view findings.`;
+        `Scan #${scanId} produced a full report. Click below to view findings.`;
       completion.classList.remove("hidden");
     }
-    if (runBtn) {
-      runBtn.disabled = false;
-      runBtn.textContent = "Run demo";
-    }
-  });
-
-  source.addEventListener("demo.failed", (e) => {
-    const evt = JSON.parse(e.data);
-    appendRaw(evt);
-    const f = friendly(evt);
-    if (f) appendEntry(f);
-    if (runBtn) {
-      runBtn.disabled = false;
-      runBtn.textContent = "Run demo";
-    }
-  });
-
-  source.onerror = () => { /* EventSource auto-reconnects */ };
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = "Run demo"; }
+  }
+  function failDemo(_error) {
+    if (runBtn) { runBtn.disabled = false; runBtn.textContent = "Run demo"; }
+  }
 })();
 </script>
 

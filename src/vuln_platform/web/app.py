@@ -172,7 +172,14 @@ def create_app(
 
 
 def _sse_generator(event_bus: EventBus) -> Iterator[bytes]:
-    """Subscribe to the bus and yield SSE-formatted events."""
+    """Subscribe to the bus and yield SSE-formatted events.
+
+    NB: we deliberately do NOT prefix with `event: <type>` lines, because
+    the browser splits named-event streams across many addEventListener
+    handlers — easy to drop events on the floor. With unnamed events
+    everything funnels through `EventSource.onmessage`, where one
+    dispatcher routes by `event.type` from the JSON payload.
+    """
     sub = event_bus.subscribe()
     try:
         # Initial keep-alive so the browser knows the stream is live.
@@ -186,7 +193,7 @@ def _sse_generator(event_bus: EventBus) -> Iterator[bytes]:
             if event is None:
                 break
             payload = json.dumps(event.to_dict())
-            yield f"event: {event.type}\ndata: {payload}\n\n".encode("utf-8")
+            yield f"data: {payload}\n\n".encode("utf-8")
     finally:
         event_bus.unsubscribe(sub)
 
