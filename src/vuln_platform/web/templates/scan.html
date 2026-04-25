@@ -123,7 +123,7 @@
     {% for chain in chains %}
     {% set sev_color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky'}[chain.severity] %}
     {% set conf_color = {'high': 'emerald', 'medium': 'amber', 'low': 'slate'}[chain.confidence] %}
-    <article class="p-6">
+    <article class="p-6" id="chain-{{ loop.index0 }}">
       <header class="flex flex-wrap items-center gap-3 mb-3">
         <h4 class="text-base font-semibold">{{ chain.title }}</h4>
         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-{{ sev_color }}-100 text-{{ sev_color }}-800 text-xs font-semibold uppercase">
@@ -141,7 +141,8 @@
           <div class="flex-1 text-sm">
             <span class="font-mono text-emerald-700"><a href="https://nvd.nist.gov/vuln/detail/{{ hop.cve_id }}" target="_blank" rel="noopener" class="hover:underline">{{ hop.cve_id }}</a></span>
             <span class="text-slate-500">on</span>
-            <span class="font-mono">{{ hop.host_ip }}:{{ hop.port }}</span>
+            <a href="#finding-{{ hop.cve_id }}-{{ hop.host_ip }}-{{ hop.port }}"
+               class="font-mono text-emerald-700 hover:underline">{{ hop.host_ip }}:{{ hop.port }}</a>
             <div class="text-slate-700 mt-0.5">{{ hop.action }}</div>
             <div class="text-xs text-slate-500 italic mt-0.5">→ {{ hop.capability_gained }}</div>
           </div>
@@ -215,7 +216,8 @@
   {% set color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky', 'info': 'slate'}[f.severity] %}
   {% set audit = audit_by_cve.get(f.cve_id) %}
   {% set cve = cves_by_id.get(f.cve_id) %}
-  <article class="border-t p-6">
+  {% set chain_indexes = chains_by_cve.get(f.cve_id, []) %}
+  <article class="border-t p-6" id="finding-{{ f.cve_id }}-{{ f.host_ip }}-{{ f.port }}">
     <header class="flex flex-wrap items-center gap-3 mb-3">
       <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 text-xs font-semibold uppercase">
         {{ f.severity }}
@@ -227,6 +229,13 @@
               title="Public exploit references on file">
           ⚡ Public exploit ({{ cve.exploit_references|length }})
         </span>
+      {% endif %}
+      {% if chain_indexes %}
+        <a href="#chain-{{ chain_indexes[0] }}"
+           class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 text-xs font-semibold hover:bg-violet-200"
+           title="This finding is part of {{ chain_indexes|length }} attack path{{ '' if chain_indexes|length == 1 else 's' }}">
+          🔗 In {{ chain_indexes|length }} attack path{{ '' if chain_indexes|length == 1 else 's' }}
+        </a>
       {% endif %}
       {% if cve and cve.patch_references %}
         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold"

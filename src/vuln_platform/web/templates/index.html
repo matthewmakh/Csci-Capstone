@@ -48,24 +48,30 @@
 </section>
 
 <section class="bg-white rounded-lg shadow">
-  <div class="px-6 py-4 border-b">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
     <h2 class="text-lg font-semibold">Scan history</h2>
+    <span class="text-xs text-slate-500">{{ scans|length }} scan{{ '' if scans|length == 1 else 's' }}</span>
   </div>
   {% if scans %}
-  <table class="w-full text-sm">
-    <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+  <table class="w-full text-sm" id="scan-history-table">
+    <thead class="bg-slate-100 text-slate-600 text-xs uppercase select-none">
       <tr>
-        <th class="text-left px-6 py-3">ID</th>
-        <th class="text-left px-6 py-3">Started</th>
-        <th class="text-left px-6 py-3">Target</th>
-        <th class="text-right px-6 py-3">Hosts</th>
-        <th class="text-right px-6 py-3">Findings</th>
-        <th class="text-right px-6 py-3">Critical</th>
+        <th class="text-left px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="num" data-key="id">ID <span class="sort-indicator"></span></th>
+        <th class="text-left px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="text" data-key="started_at">Started <span class="sort-indicator"></span></th>
+        <th class="text-left px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="text" data-key="scope_target">Target <span class="sort-indicator"></span></th>
+        <th class="text-right px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="num" data-key="host_count">Hosts <span class="sort-indicator"></span></th>
+        <th class="text-right px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="num" data-key="finding_count">Findings <span class="sort-indicator"></span></th>
+        <th class="text-right px-6 py-3 cursor-pointer hover:text-slate-900" data-sort="num" data-key="critical_count">Critical <span class="sort-indicator"></span></th>
       </tr>
     </thead>
     <tbody>
       {% for s in scans %}
-      <tr class="border-t hover:bg-slate-50">
+      <tr class="border-t hover:bg-slate-50"
+          data-id="{{ s.id }}" data-started_at="{{ s.started_at }}"
+          data-scope_target="{{ s.scope_target }}"
+          data-host_count="{{ s.host_count }}"
+          data-finding_count="{{ s.finding_count }}"
+          data-critical_count="{{ s.critical_count }}">
         <td class="px-6 py-3 font-mono text-xs">
           <a href="/scans/{{ s.id }}" class="text-emerald-700 hover:underline">#{{ s.id }}</a>
         </td>
@@ -84,6 +90,38 @@
       {% endfor %}
     </tbody>
   </table>
+  <script>
+  (function() {
+    const table = document.getElementById("scan-history-table");
+    if (!table) return;
+    const tbody = table.querySelector("tbody");
+    let sortKey = "id", sortDir = -1;  // newest first by default
+    function applySort() {
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const ths = table.querySelectorAll("th[data-key]");
+      ths.forEach(th => {
+        const ind = th.querySelector(".sort-indicator");
+        ind.textContent = th.dataset.key === sortKey ? (sortDir > 0 ? " ▲" : " ▼") : "";
+      });
+      const isNum = table.querySelector(`th[data-key="${sortKey}"]`).dataset.sort === "num";
+      rows.sort((a, b) => {
+        const av = a.dataset[sortKey], bv = b.dataset[sortKey];
+        const ax = isNum ? parseFloat(av || 0) : av || "";
+        const bx = isNum ? parseFloat(bv || 0) : bv || "";
+        return ax < bx ? -sortDir : ax > bx ? sortDir : 0;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    }
+    table.querySelectorAll("th[data-key]").forEach(th => {
+      th.addEventListener("click", () => {
+        if (sortKey === th.dataset.key) sortDir *= -1;
+        else { sortKey = th.dataset.key; sortDir = -1; }
+        applySort();
+      });
+    });
+    applySort();
+  })();
+  </script>
   {% else %}
   <p class="px-6 py-8 text-slate-500 text-center">
     No scans yet. Click <strong>Open live view</strong> above to run one,

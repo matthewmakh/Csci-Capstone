@@ -114,13 +114,18 @@ def create_app(
                 cve = store.get_cve(f.cve_id)
                 if cve is not None:
                     cves_by_id[f.cve_id] = cve
+        # Reconstruct cves_by_service from persisted findings so the
+        # executive summary's "N CVE(s) discovered" count is correct on
+        # historical-scan re-renders. (We don't persist cves_by_service
+        # itself; this projection from findings is good enough.)
+        cves_by_service = _reconstruct_cves_by_service(hosts, findings, cves_by_id)
         scope = _placeholder_scope(scan["scope_target"])
         report_md = render_report(
             scope=scope,
             scope_target=scan["scope_target"],
             findings=findings,
             hosts=hosts,
-            cves_by_service=None,
+            cves_by_service=cves_by_service,
             chains=chains,
         )
         report_html = md_lib.markdown(
@@ -136,6 +141,12 @@ def create_app(
         audit_by_cve = _index_audit_by_cve(settings.audit_log_path)
 
         topology = topology_layout(hosts, findings, chains)
+        # Map each CVE -> indexes of chains that reference it, for the
+        # "this finding is in N attack paths" cross-link in the UI.
+        chains_by_cve: dict[str, list[int]] = {}
+        for idx, chain in enumerate(chains):
+            for hop in chain.hops:
+                chains_by_cve.setdefault(hop.cve_id, []).append(idx)
         return templates.TemplateResponse(
             request,
             "scan.html",
@@ -149,6 +160,7 @@ def create_app(
                 "chains": chains,
                 "cves_by_id": cves_by_id,
                 "topology": topology,
+                "chains_by_cve": chains_by_cve,
             },
         )
 
@@ -587,6 +599,35 @@ def parse_cvss_vector(vector: str) -> list[dict[str, str]]:
                 "label": label,
                 "value": options.get(val, val),
             })
+    return out
+
+
+def _reconstruct_cves_by_service(
+    hosts: list, findings: list, cves_by_id: dict[str, Any],
+) -> dict[str, list]:
+    """Rebuild the {service_key: [CVE]} map from persisted findings.
+
+    We don't store cves_by_service directly — only the per-CVE rows in
+    the cves table and the per-finding rows in findings. For scan-detail
+    re-renders we project: each finding's (service, version) becomes a
+    bucket and the CVEs cited by findings in that bucket are pulled from
+    cves_by_id.
+    """
+    out: dict[str, list] = {}
+    for h in hosts:
+        for p in h.open_ports:
+            if p.service is None:
+                continue
+            key = f"{p.service.name.lower()} {p.service.version or ''}".strip()
+            out.setdefault(key, [])
+    for f in findings:
+        key = f"{f.service_name.lower()} {f.service_version or ''}".strip()
+        cve = cves_by_id.get(f.cve_id)
+        if cve is None:
+            continue
+        bucket = out.setdefault(key, [])
+        if all(c.cve_id != cve.cve_id for c in bucket):
+            bucket.append(cve)
     return out
 
 

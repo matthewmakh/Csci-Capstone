@@ -112,3 +112,27 @@
 .prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; }
 .prose h4 { font-size: 1rem;   font-weight: 600; margin-top: 0.75rem; }
 .prose p, .prose ul, .prose ol, .prose table { margin: 0.5rem 0; }
+
+/* Print: strip the dashboard chrome and show the rendered Markdown
+ * report only. Lets users hand the scan page to a stakeholder as
+ * a PDF via Cmd+P -> Save as PDF, no extra tooling required. */
+@media print {
+  body { background: white; }
+  header, nav, footer, button, form, .info-tip,
+  details summary, .agent-stage, .stage-fade-in,
+  #scan-history-table { display: none !important; }
+  /* Drop the soft surfaces that look weird on paper. */
+  .shadow, .rounded-lg, .border-l-4 {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    border-left: none !important;
+  }
+  /* Force the markdown report to fill the page. */
+  .prose { max-width: none; font-size: 11pt; }
+  .prose pre { background: #f1f5f9; color: #0f172a; }
+  /* Page-break hints. */
+  h2, h3 { break-after: avoid; }
+  table, pre, blockquote, article { break-inside: avoid; }
+  a { color: #1e40af; text-decoration: underline; }
+  a[href^="http"]:after { content: " (" attr(href) ")"; font-size: 9pt; }
+}

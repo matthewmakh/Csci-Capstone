@@ -9,14 +9,14 @@
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
   <header class="bg-slate-900 text-white">
-    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-y-2 justify-between">
       <div>
-        <h1 class="text-xl font-semibold">
+        <h1 class="text-base sm:text-xl font-semibold">
           <a href="/" class="hover:text-slate-300">Agentic Vulnerability Assessment Platform</a>
         </h1>
         <p class="text-xs text-slate-400 mt-1">CSCI 401 Capstone &middot; John Jay College</p>
       </div>
-      <nav class="flex gap-4 text-sm">
+      <nav class="flex gap-3 sm:gap-4 text-sm flex-wrap">
         <a href="/" class="hover:text-slate-300">Scans</a>
         <a href="/live" class="hover:text-slate-300">Live</a>
         <a href="/audit" class="hover:text-slate-300">Audit Log</a>
@@ -25,11 +25,11 @@
     </div>
   </header>
 
-  <main class="max-w-6xl mx-auto px-6 py-8">
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="max-w-6xl mx-auto px-6 py-6 text-xs text-slate-500">
+  <footer class="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-xs text-slate-500">
     Authorized scanning only. See <code>docs/ethics.md</code>.
   </footer>
 </body>

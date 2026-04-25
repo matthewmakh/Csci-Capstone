@@ -57,9 +57,13 @@
     </button>
   </div>
 
-  <div id="empty-state" class="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-12 text-center">
+  <div id="empty-state" class="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-12 text-center {% if demo_running %}hidden{% endif %}">
     <p class="text-slate-500 mb-2">Nothing's happening yet.</p>
     <p class="text-sm text-slate-400">Click <strong>Run demo</strong> above to start the pipeline. You'll see step-by-step progress here.</p>
+  </div>
+
+  <div id="connecting-state" class="bg-amber-50 border border-amber-200 rounded-lg p-8 text-center {% if not demo_running %}hidden{% endif %}">
+    <p class="text-amber-800">A pipeline is already running — waiting for the next event…</p>
   </div>
 
   <div id="stages" class="space-y-4 hidden"></div>
@@ -267,6 +271,8 @@
 
   function appendEntry(friendly) {
     emptyState.classList.add("hidden");
+    const connecting = document.getElementById("connecting-state");
+    if (connecting) connecting.classList.add("hidden");
     stagesContainer.classList.remove("hidden");
 
     // If a previous "thinking..." entry should be replaced, swap it.
