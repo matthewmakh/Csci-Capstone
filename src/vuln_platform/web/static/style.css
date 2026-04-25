@@ -54,6 +54,27 @@
   animation: pulse-ring 1.5s infinite;
 }
 
+/* Subtle fade-in for live timeline entries — keeps the stream calm. */
+@keyframes fade-slide-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.entry-fade-in {
+  animation: fade-slide-in 240ms ease-out;
+}
+.stage-fade-in {
+  animation: fade-slide-in 320ms ease-out;
+}
+
+/* Tailwind purges classes it doesn't see in templates, but border-l-4
+ * with a dynamic color is built via string concat in JS, so we
+ * safelist a few common ones via @apply-style declarations. */
+.border-sky-400     { border-color: rgb(56 189 248); }
+.border-violet-400  { border-color: rgb(167 139 250); }
+.border-emerald-400 { border-color: rgb(52 211 153); }
+.border-amber-400   { border-color: rgb(251 191 36); }
+.border-slate-400   { border-color: rgb(148 163 184); }
+
 /* Markdown report tables (rendered via python-markdown). Tailwind's
  * Typography plugin would handle this normally, but we don't pull
  * that in to keep the dep footprint small. */

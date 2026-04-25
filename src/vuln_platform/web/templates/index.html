@@ -2,36 +2,31 @@
 {% block title %}Scans{% endblock %}
 {% block content %}
 
-<section class="bg-white rounded-lg shadow p-6 mb-6 flex items-start justify-between flex-wrap gap-4">
-  <div>
-    <h2 class="text-lg font-semibold mb-1">
-      Run a one-click demo
-      <span class="info-tip" data-tip="Spins up examples/demo_target/fake_service.py on 127.0.0.1:18080 (advertises Apache 2.4.49 banner) and runs the full pipeline against it. Self-contained — no external network needed.">[?]</span>
-    </h2>
-    <p class="text-sm text-slate-600">
-      Recon → Enrichment
-      {% if has_anthropic_key %}→ Triage (Claude Opus 4.7){% else %}(triage skipped — no API key){% endif %}
-      → Reporter. Takes ~10 seconds.
-      <a href="/live" class="text-emerald-700 hover:underline">Watch it live &rarr;</a>
+<section class="bg-gradient-to-br from-emerald-50 to-sky-50 border border-emerald-200 rounded-lg p-6 mb-6 flex items-start justify-between flex-wrap gap-4">
+  <div class="max-w-2xl">
+    <h2 class="text-xl font-semibold mb-2">Watch a live demo</h2>
+    <p class="text-sm text-slate-700 mb-1">
+      Spins up five deliberately-vulnerable services on your laptop
+      (Apache, OpenSSH, vsftpd, Redis, Exim) and runs the full pipeline
+      against them
+      {% if has_anthropic_key %}with Claude Opus 4.7 triage{% else %}(triage skipped — no API key){% endif %}.
+      You'll watch each agent work in real time and end up with a
+      9-finding pentest report.
     </p>
     {% if not has_anthropic_key %}
     <p class="text-xs text-amber-700 mt-2">
-      <code>ANTHROPIC_API_KEY</code> not set; the report will show
-      discovered services but no LLM-triaged findings.
+      <code>ANTHROPIC_API_KEY</code> not set; the report will still
+      list discovered services and CVEs, but without LLM triage rationale.
     </p>
     {% endif %}
   </div>
-  <div class="flex gap-2">
-    <a href="/about" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded shadow text-sm font-medium">
-      How it works
+  <div class="flex gap-2 items-center">
+    <a href="/about" class="text-slate-700 hover:text-slate-900 px-4 py-2 text-sm font-medium">
+      How it works &rarr;
     </a>
-    <form method="post" action="/demo">
-      <button type="submit"
-              {% if demo_running %}disabled{% endif %}
-              class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-medium px-4 py-2 rounded shadow">
-        {% if demo_running %}Running…{% else %}Run demo{% endif %}
-      </button>
-    </form>
+    <a href="/live" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg shadow text-sm font-semibold">
+      Open live view &rarr;
+    </a>
   </div>
 </section>
 
@@ -74,22 +69,10 @@
   </table>
   {% else %}
   <p class="px-6 py-8 text-slate-500 text-center">
-    No scans yet. Click <strong>Run demo</strong> above to generate one,
-    or run <code>make scan ARGS='--ip ... '</code> from the CLI.
+    No scans yet. Click <strong>Open live view</strong> above to run one,
+    or use <code>make scan ARGS='--ip ... '</code> from the CLI.
   </p>
   {% endif %}
 </section>
-
-{% if demo_running %}
-<script>
-  // Poll the demo status; reload the page when it finishes so the new
-  // scan shows up in the history table.
-  setInterval(async () => {
-    const r = await fetch("/demo/status");
-    const data = await r.json();
-    if (!data.running) window.location.reload();
-  }, 1500);
-</script>
-{% endif %}
 
 {% endblock %}
