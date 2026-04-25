@@ -20,6 +20,10 @@ class Orchestrator:
         self.agents = list(agents)
         self.event_bus = event_bus
 
+    # Agents whose failure should NOT halt the pipeline. We still want
+    # the Reporter to render whatever data the upstream agents produced.
+    _NON_FATAL_AGENTS = frozenset({"triage", "enrichment"})
+
     def run(self, context: AgentContext) -> AgentContext:
         agent_names = [a.name for a in self.agents]
         self._publish("pipeline.started", scan_id=context.scan_id,
@@ -29,9 +33,15 @@ class Orchestrator:
             self._publish("pipeline.agent_started", agent=agent.name)
             try:
                 context = agent.run(context)
-            except Exception as e:  # noqa: BLE001 - report and re-raise
+            except Exception as e:  # noqa: BLE001 - report and decide
                 self._publish("pipeline.agent_failed",
                               agent=agent.name, error=str(e))
+                if agent.name in self._NON_FATAL_AGENTS:
+                    logger.exception(
+                        "orchestrator: %s failed but is non-fatal; continuing",
+                        agent.name,
+                    )
+                    continue
                 raise
             self._publish("pipeline.agent_finished", agent=agent.name)
         self._publish("pipeline.finished",
