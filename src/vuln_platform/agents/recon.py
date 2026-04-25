@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from ..ethics import Scope, enforce_in_scope
+
+if TYPE_CHECKING:
+    from ..events import EventBus
 from ..models import Host, Port
 from ..scanner import (
     connect_scan,
@@ -40,6 +44,7 @@ class ReconAgent(BaseAgent):
         workers: int = 100,
         skip_host_discovery: bool = False,
         scan_method: ScanMethod = "auto",
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self.scope = scope
         self.store = store
@@ -51,6 +56,7 @@ class ReconAgent(BaseAgent):
         # discovery and assume the target is live.
         self.skip_host_discovery = skip_host_discovery
         self.scan_method = self._resolve_method(scan_method)
+        self.event_bus = event_bus
 
     @staticmethod
     def _resolve_method(method: ScanMethod) -> ScanMethod:
@@ -75,17 +81,30 @@ class ReconAgent(BaseAgent):
     def run(self, context: AgentContext) -> AgentContext:
         logger.info("recon: enforcing scope on %s", context.scope_target)
         enforce_in_scope(self.scope, context.scope_target)
+        self.emit(
+            "recon.started",
+            target=context.scope_target,
+            scan_method=self.scan_method,
+            port_count=len(self.ports),
+        )
 
         if self.skip_host_discovery:
             live_hosts = [context.scope_target.split("/")[0]]
             logger.info("recon: skipping host discovery, assuming %s is live", live_hosts[0])
+            self.emit("recon.host_discovery_skipped", host=live_hosts[0])
         else:
             live_hosts = ping_scan(context.scope_target)
             logger.info("recon: %d live host(s)", len(live_hosts))
+            self.emit("recon.host_discovery_done",
+                      live_count=len(live_hosts), hosts=live_hosts)
 
         for ip in live_hosts:
             enforce_in_scope(self.scope, ip)
+            self.emit("recon.scanning_host",
+                      host=ip, ports_to_scan=len(self.ports))
             open_ports = self._scan_ports(ip)
+            self.emit("recon.port_scan_done",
+                      host=ip, open_count=len(open_ports), open_ports=open_ports)
             ports: list[Port] = []
             for p in open_ports:
                 banner = grab_banner(ip, p)
@@ -95,7 +114,19 @@ class ReconAgent(BaseAgent):
                     "recon: %s:%d -> %s %s",
                     ip, p, service.name, service.version or "?",
                 )
+                self.emit(
+                    "recon.service_identified",
+                    host=ip, port=p,
+                    service=service.name,
+                    version=service.version,
+                    banner_preview=(service.banner or "").splitlines()[0][:80] if service.banner else None,
+                )
             host = Host(ip=ip, open_ports=ports)  # type: ignore[arg-type]
             context.hosts.append(host)
             self.store.save_host(context.scan_id, host)
+        self.emit(
+            "recon.done",
+            host_count=len(context.hosts),
+            port_count=sum(len(h.open_ports) for h in context.hosts),
+        )
         return context

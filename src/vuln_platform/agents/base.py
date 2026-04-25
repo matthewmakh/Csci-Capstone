@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from ..events import Event, EventBus
 from ..models import CVE, Finding, Host
 
 
@@ -31,6 +32,13 @@ class BaseAgent(ABC):
     """Abstract agent — one `run(context)` method, returns the (mutated) context."""
 
     name: str = "agent"
+    event_bus: EventBus | None = None
+
+    def emit(self, event_type: str, **data: object) -> None:
+        """Publish an event if a bus is attached. No-op otherwise."""
+        if self.event_bus is None:
+            return
+        self.event_bus.publish(Event(type=event_type, data=dict(data)))
 
     @abstractmethod
     def run(self, context: AgentContext) -> AgentContext:  # pragma: no cover

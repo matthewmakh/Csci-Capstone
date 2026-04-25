@@ -3,7 +3,10 @@
 {% block content %}
 
 <header class="bg-white rounded-lg shadow p-6 mb-6">
-  <h2 class="text-xl font-semibold">LLM Audit Log</h2>
+  <h2 class="text-xl font-semibold">
+    LLM Audit Log
+    <span class="info-tip" data-tip="One JSON object per Claude API call. Each record includes the model, token usage, response text, and SHA-256 hashes of the system + user prompts (so you can detect prompt drift without storing the raw text twice).">[?]</span>
+  </h2>
   <p class="text-sm text-slate-600 mt-2">
     Every Claude API call made by the Triage Agent is recorded here.
     Required by the rubric's auditability criterion. Source file:
@@ -14,7 +17,8 @@
 {% if entries %}
 <section class="space-y-4">
   {% for e in entries %}
-  <article class="bg-white rounded-lg shadow p-5">
+  {% set cve = e.get('extra', {}).get('cve_id') %}
+  <article class="bg-white rounded-lg shadow p-5" {% if cve %}id="cve-{{ cve }}"{% endif %}>
     <div class="flex items-center justify-between mb-3">
       <div class="flex gap-3 text-sm">
         <span class="font-mono text-slate-500">{{ e.timestamp }}</span>
@@ -37,6 +41,7 @@
     <div class="mt-2 text-xs text-slate-400 font-mono">
       system_sha256: {{ (e.system_prompt_sha256 or '')[:12] }}…
       &middot; user_sha256: {{ (e.user_prompt_sha256 or '')[:12] }}…
+      {% if cve %}&middot; cve: <a href="https://nvd.nist.gov/vuln/detail/{{ cve }}" class="text-emerald-700 hover:underline">{{ cve }}</a>{% endif %}
     </div>
   </article>
   {% endfor %}

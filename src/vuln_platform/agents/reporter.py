@@ -4,10 +4,14 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from ..ethics import Scope
 from ..models import CVE, Finding, Host
 from .base import AgentContext, BaseAgent
+
+if TYPE_CHECKING:
+    from ..events import EventBus
 
 
 logger = logging.getLogger(__name__)
@@ -18,10 +22,12 @@ _SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 class ReporterAgent(BaseAgent):
     name = "reporter"
 
-    def __init__(self, *, scope: Scope) -> None:
+    def __init__(self, *, scope: Scope, event_bus: "EventBus | None" = None) -> None:
         self.scope = scope
+        self.event_bus = event_bus
 
     def run(self, context: AgentContext) -> AgentContext:
+        self.emit("reporter.started")
         context.report_markdown = render_report(
             scope=self.scope,
             scope_target=context.scope_target,
@@ -29,6 +35,7 @@ class ReporterAgent(BaseAgent):
             hosts=context.hosts,
             cves_by_service=context.cves_by_service,
         )
+        self.emit("reporter.done", scan_id=context.scan_id)
         return context
 
 

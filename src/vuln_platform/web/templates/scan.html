@@ -9,7 +9,7 @@
 <header class="bg-white rounded-lg shadow p-6 mb-6">
   <h2 class="text-xl font-semibold">Scan #{{ scan.id }} &mdash; <span class="font-mono">{{ scan.scope_target }}</span></h2>
   <p class="text-sm text-slate-500 mt-1">Started {{ scan.started_at }}</p>
-  <div class="flex gap-3 mt-4 text-sm">
+  <div class="flex gap-3 mt-4 text-sm flex-wrap">
     {% set sev_counts = {} %}
     {% for sev, group in findings_by_severity.items() %}
       {% set _ = sev_counts.update({sev: group|length}) %}
@@ -26,50 +26,123 @@
   </div>
 </header>
 
-{% if findings %}
+{% if hosts %}
 <section class="bg-white rounded-lg shadow mb-6">
   <div class="px-6 py-4 border-b">
-    <h3 class="text-lg font-semibold">Findings</h3>
+    <h3 class="text-lg font-semibold">
+      Discovered Services
+      <span class="info-tip" data-tip="Each row is a port the Recon Agent found open, plus the service it identified by reading the banner the server sent back.">[?]</span>
+    </h3>
   </div>
   <table class="w-full text-sm">
     <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
       <tr>
-        <th class="text-left px-6 py-3">Severity</th>
-        <th class="text-left px-6 py-3">CVE</th>
         <th class="text-left px-6 py-3">Host:Port</th>
         <th class="text-left px-6 py-3">Service</th>
-        <th class="text-left px-6 py-3">CVSS</th>
-        <th class="text-left px-6 py-3">Exploit</th>
+        <th class="text-left px-6 py-3">Version</th>
+        <th class="text-left px-6 py-3">Banner</th>
       </tr>
     </thead>
     <tbody>
-      {% for f in findings %}
-      {% set color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky', 'info': 'slate'}[f.severity] %}
-      <tr class="border-t">
-        <td class="px-6 py-3">
-          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 text-xs font-semibold">
-            {{ f.severity }}
-          </span>
-        </td>
-        <td class="px-6 py-3 font-mono">
-          <a href="https://nvd.nist.gov/vuln/detail/{{ f.cve_id }}" target="_blank" rel="noopener"
-             class="text-emerald-700 hover:underline">{{ f.cve_id }}</a>
-        </td>
-        <td class="px-6 py-3 font-mono">{{ f.host_ip }}:{{ f.port }}</td>
-        <td class="px-6 py-3">{{ f.service_name }} {{ f.service_version or '' }}</td>
-        <td class="px-6 py-3">{{ f.cvss_score if f.cvss_score is not none else '—' }}</td>
-        <td class="px-6 py-3">{{ f.exploit_likelihood }}</td>
-      </tr>
-      <tr class="border-t bg-slate-50">
-        <td colspan="6" class="px-6 py-4 text-sm">
-          <p class="mb-2"><strong>Description:</strong> {{ f.cve_description }}</p>
-          <p class="mb-2"><strong>Triage rationale:</strong> {{ f.rationale }}</p>
-          <p><strong>Recommended action:</strong> {{ f.recommended_action }}</p>
-        </td>
-      </tr>
+      {% for host in hosts %}
+        {% for p in host.open_ports %}
+        <tr class="border-t">
+          <td class="px-6 py-3 font-mono">{{ host.ip }}:{{ p.number }}</td>
+          <td class="px-6 py-3">{{ p.service.name if p.service else 'unknown' }}</td>
+          <td class="px-6 py-3">{{ (p.service.version if p.service else '') or '—' }}</td>
+          <td class="px-6 py-3 font-mono text-xs text-slate-500 truncate max-w-md">
+            {{ ((p.service.banner if p.service else '') or '').splitlines()[0] if (p.service and p.service.banner) else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
       {% endfor %}
     </tbody>
   </table>
+</section>
+{% endif %}
+
+{% if findings %}
+<section class="bg-white rounded-lg shadow mb-6">
+  <div class="px-6 py-4 border-b">
+    <h3 class="text-lg font-semibold">
+      Triaged Findings
+      <span class="info-tip" data-tip="One row per (CVE × host:port). Severity and rationale come from the Triage Agent (Claude Opus 4.7) with structured output.">[?]</span>
+    </h3>
+  </div>
+
+  {% for f in findings %}
+  {% set color = {'critical': 'red', 'high': 'orange', 'medium': 'amber', 'low': 'sky', 'info': 'slate'}[f.severity] %}
+  {% set audit = audit_by_cve.get(f.cve_id) %}
+  <article class="border-t p-6">
+    <header class="flex flex-wrap items-center gap-3 mb-3">
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-{{ color }}-100 text-{{ color }}-800 text-xs font-semibold uppercase">
+        {{ f.severity }}
+      </span>
+      <a href="https://nvd.nist.gov/vuln/detail/{{ f.cve_id }}" target="_blank" rel="noopener"
+         class="font-mono font-semibold text-emerald-700 hover:underline">{{ f.cve_id }}</a>
+      <span class="text-sm text-slate-500">on</span>
+      <span class="font-mono">{{ f.host_ip }}:{{ f.port }}</span>
+      <span class="text-sm text-slate-500">({{ f.service_name }} {{ f.service_version or '' }})</span>
+      <span class="ml-auto text-xs text-slate-500">
+        CVSS
+        <span class="info-tip" data-tip="Common Vulnerability Scoring System. 0.0–10.0, where 9.0+ is critical, 7.0–8.9 high, etc. Comes from NVD.">[?]</span>
+        <strong>{{ f.cvss_score if f.cvss_score is not none else '—' }}</strong>
+        &middot; exploit
+        <span class="info-tip" data-tip="Triage Agent's estimate, weighing public PoC availability, authentication requirements, and reachability.">[?]</span>
+        <strong>{{ f.exploit_likelihood }}</strong>
+      </span>
+    </header>
+
+    <p class="text-sm text-slate-700 mb-3"><strong>Description.</strong> {{ f.cve_description }}</p>
+
+    <div class="bg-slate-50 border-l-4 border-emerald-400 p-3 rounded mb-3">
+      <p class="text-xs font-semibold text-slate-500 uppercase mb-1">Triage rationale</p>
+      <p class="text-sm">{{ f.rationale }}</p>
+    </div>
+
+    <div class="bg-amber-50 border-l-4 border-amber-400 p-3 rounded mb-3">
+      <p class="text-xs font-semibold text-slate-500 uppercase mb-1">Recommended action</p>
+      <p class="text-sm">{{ f.recommended_action }}</p>
+    </div>
+
+    <details class="text-sm group">
+      <summary class="cursor-pointer text-emerald-700 hover:underline select-none">
+        How was this finding produced?
+      </summary>
+      <ol class="mt-3 ml-2 space-y-2 border-l-2 border-emerald-200 pl-4">
+        <li>
+          <strong class="text-sky-700">Recon.</strong>
+          Connect-scan
+          <span class="info-tip" data-tip="A userland TCP scan that completes the three-way handshake. Used when raw sockets aren't available (no root). Slower than SYN scan but always works.">[?]</span>
+          found <code>{{ f.host_ip }}:{{ f.port }}</code> open and grabbed
+          its banner. Banner parser identified the service as
+          <code>{{ f.service_name }}{% if f.service_version %} {{ f.service_version }}{% endif %}</code>.
+        </li>
+        <li>
+          <strong class="text-violet-700">Enrichment.</strong>
+          Looked up <code>{{ f.service_name }} {{ f.service_version or '' }}</code>
+          against the NIST NVD database
+          <span class="info-tip" data-tip="National Vulnerability Database — the authoritative U.S. government catalog of disclosed vulnerabilities, with CVSS scores and references.">[?]</span>
+          and matched <code>{{ f.cve_id }}</code> (CVSS {{ f.cvss_score or '?' }}).
+        </li>
+        <li>
+          <strong class="text-emerald-700">Triage.</strong>
+          {% if audit %}
+          Claude Opus 4.7 received the host/service/CVE context plus a
+          rubric system prompt
+          <span class="info-tip" data-tip="The system prompt encodes the severity rubric: how to anchor to CVSS, when to adjust up/down, how to estimate exploit likelihood. Cached so repeat calls reuse it.">[?]</span>
+          and returned the structured assessment above. Tokens used:
+          <span class="font-mono">{{ audit.usage.get('input_tokens', '?') }}/{{ audit.usage.get('output_tokens', '?') }}</span>
+          (in/out). <a href="/audit#cve-{{ f.cve_id }}" class="text-emerald-700 hover:underline">See exact audit entry &rarr;</a>
+          {% else %}
+          No matching audit entry was found for this finding. (It may
+          have been seeded without an LLM call.)
+          {% endif %}
+        </li>
+      </ol>
+    </details>
+  </article>
+  {% endfor %}
 </section>
 {% endif %}
 

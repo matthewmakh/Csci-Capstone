@@ -4,20 +4,26 @@ Pages:
 - /            — list of scans with summary counts
 - /scans/{id}  — rendered markdown report + findings table
 - /audit       — audit log viewer (LLM I/O records)
-- /demo        — trigger a one-click demo scan in the background
+- /about       — architecture / walkthrough page
+- /live        — real-time pipeline visualization with SSE
+- /demo        — POST: trigger a one-click demo scan in the background
+- /api/events  — SSE stream of pipeline events for the live view
 """
 from __future__ import annotations
 
 import json
 import logging
+import queue
+import re
 import threading
+import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import markdown as md_lib
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -32,6 +38,7 @@ from ..agents.reporter import render_report
 from ..audit import AuditLogger
 from ..config import Settings, load_settings
 from ..ethics import load_scope
+from ..events import Event, EventBus, bus
 from ..orchestrator import Orchestrator
 from ..storage import Store
 
@@ -43,8 +50,12 @@ TEMPLATE_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    event_bus: EventBus | None = None,
+) -> FastAPI:
     settings = settings or load_settings()
+    event_bus = event_bus or bus
     app = FastAPI(title="Vulnerability Assessment Platform", version="0.1.0")
 
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
@@ -76,10 +87,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="scan not found")
         hosts = store.list_hosts(scan_id)
         findings = store.list_findings(scan_id)
-
-        # Re-render the markdown report so the page shows the same thing
-        # the CLI prints. We don't have the original scope object cached,
-        # so build a minimal placeholder for the attestation block.
         scope = _placeholder_scope(scan["scope_target"])
         report_md = render_report(
             scope=scope,
@@ -92,9 +99,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             report_md, extensions=["tables", "fenced_code"]
         )
 
-        findings_by_severity = defaultdict(list)
+        findings_by_severity: dict[str, list] = defaultdict(list)
         for f in findings:
             findings_by_severity[f.severity].append(f)
+
+        # Index audit entries by the per-call extra.cve_id so each finding
+        # can deep-link to the exact LLM call that produced it.
+        audit_by_cve = _index_audit_by_cve(settings.audit_log_path)
 
         return templates.TemplateResponse(
             request,
@@ -105,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "findings": findings,
                 "findings_by_severity": dict(findings_by_severity),
                 "report_html": report_html,
+                "audit_by_cve": audit_by_cve,
             },
         )
 
@@ -115,12 +127,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request, "audit.html", {"entries": entries},
         )
 
+    @app.get("/about", response_class=HTMLResponse)
+    def about(request: Request) -> Any:
+        return templates.TemplateResponse(request, "about.html", {})
+
+    @app.get("/live", response_class=HTMLResponse)
+    def live(request: Request) -> Any:
+        return templates.TemplateResponse(
+            request, "live.html",
+            {
+                "has_anthropic_key": settings.has_anthropic_key,
+                "demo_running": demo_state.is_running(),
+            },
+        )
+
     @app.post("/demo")
-    def trigger_demo() -> Any:
-        if demo_state.is_running():
-            return RedirectResponse(url="/", status_code=303)
-        demo_state.start(settings)
-        return RedirectResponse(url="/", status_code=303)
+    def trigger_demo(request: Request) -> Any:
+        if not demo_state.is_running():
+            demo_state.start(settings, event_bus)
+        # If the user came from /live, keep them there to watch the stream.
+        target = "/live" if request.headers.get("referer", "").endswith("/live") else "/"
+        return RedirectResponse(url=target, status_code=303)
 
     @app.get("/demo/status")
     def demo_status() -> dict:
@@ -130,7 +157,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "last_error": demo_state.last_error,
         }
 
+    @app.get("/api/events")
+    def event_stream() -> StreamingResponse:
+        return StreamingResponse(
+            _sse_generator(event_bus),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     return app
+
+
+def _sse_generator(event_bus: EventBus) -> Iterator[bytes]:
+    """Subscribe to the bus and yield SSE-formatted events."""
+    sub = event_bus.subscribe()
+    try:
+        # Initial keep-alive so the browser knows the stream is live.
+        yield b": connected\n\n"
+        while True:
+            try:
+                event = sub.get(timeout=15)
+            except queue.Empty:
+                yield b": keep-alive\n\n"
+                continue
+            if event is None:
+                break
+            payload = json.dumps(event.to_dict())
+            yield f"event: {event.type}\ndata: {payload}\n\n".encode("utf-8")
+    finally:
+        event_bus.unsubscribe(sub)
 
 
 class _DemoState:
@@ -146,34 +204,44 @@ class _DemoState:
         with self._lock:
             return self._thread is not None and self._thread.is_alive()
 
-    def start(self, settings: Settings) -> None:
+    def start(self, settings: Settings, event_bus: EventBus) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
             self.last_error = None
             self._thread = threading.Thread(
-                target=self._run, args=(settings,), daemon=True
+                target=self._run, args=(settings, event_bus), daemon=True
             )
             self._thread.start()
 
-    def _run(self, settings: Settings) -> None:
+    def _run(self, settings: Settings, event_bus: EventBus) -> None:
         try:
-            self.last_scan_id = _run_demo_pipeline(settings)
-        except Exception as e:  # noqa: BLE001 - report any failure to the UI
+            self.last_scan_id = _run_demo_pipeline(settings, event_bus)
+        except Exception as e:  # noqa: BLE001
             logger.exception("demo pipeline failed")
             self.last_error = str(e)
+            event_bus.publish(Event(type="demo.failed", data={"error": str(e)}))
+        else:
+            event_bus.publish(Event(
+                type="demo.finished",
+                data={"scan_id": self.last_scan_id},
+            ))
 
 
-def _run_demo_pipeline(settings: Settings) -> int:
-    """Run the same demo pipeline as the CLI, against the local fake target."""
+def _run_demo_pipeline(settings: Settings, event_bus: EventBus) -> int:
+    """Run the demo pipeline against the local fake target, publishing events."""
     import subprocess
     import sys
-    import time
 
     examples_root = Path(__file__).resolve().parents[3] / "examples"
     fake_target = examples_root / "demo_target" / "fake_service.py"
     scope_file = examples_root / "scope.example.yaml"
     cve_seed = examples_root / "demo_target" / "seed_cves.json"
+
+    event_bus.publish(Event(
+        type="demo.starting",
+        data={"target": "127.0.0.1", "demo_port": 18080},
+    ))
 
     proc = subprocess.Popen(
         [sys.executable, str(fake_target), "--port", "18080"],
@@ -192,18 +260,21 @@ def _run_demo_pipeline(settings: Settings) -> int:
             scope=scope, store=store, ports=[18080],
             timeout=0.5, workers=4,
             skip_host_discovery=True, scan_method="connect",
+            event_bus=event_bus,
         )
         enrichment = EnrichmentAgent(
             store=store, api_key=settings.nvd_api_key, seed_path=cve_seed,
+            event_bus=event_bus,
         )
         agents = [recon, enrichment]
         if settings.has_anthropic_key:
             agents.append(TriageAgent(
                 store=store, audit=audit, model=settings.triage_model,
+                event_bus=event_bus,
             ))
-        agents.append(ReporterAgent(scope=scope))
+        agents.append(ReporterAgent(scope=scope, event_bus=event_bus))
 
-        Orchestrator(agents).run(context)
+        Orchestrator(agents, event_bus=event_bus).run(context)
         return scan_id
     finally:
         proc.terminate()
@@ -227,6 +298,54 @@ def _load_audit(path: Path, limit: int = 200) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return list(reversed(out[-limit:]))
+
+
+def _index_audit_by_cve(path: Path) -> dict[str, dict]:
+    """Map cve_id -> most recent audit entry that referenced it."""
+    if not path.exists():
+        return {}
+    out: dict[str, dict] = {}
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            extra = rec.get("extra") or {}
+            cve_id = extra.get("cve_id")
+            if cve_id:
+                out[cve_id] = rec  # last-wins is correct for "most recent"
+    return out
+
+
+# CVSS v3 vector parser — best-effort, only labels the components.
+_CVSS_LABEL = {
+    "AV": ("Attack Vector", {"N": "Network", "A": "Adjacent", "L": "Local", "P": "Physical"}),
+    "AC": ("Attack Complexity", {"L": "Low", "H": "High"}),
+    "PR": ("Privileges Required", {"N": "None", "L": "Low", "H": "High"}),
+    "UI": ("User Interaction", {"N": "None", "R": "Required"}),
+    "S": ("Scope", {"U": "Unchanged", "C": "Changed"}),
+    "C": ("Confidentiality", {"H": "High", "L": "Low", "N": "None"}),
+    "I": ("Integrity", {"H": "High", "L": "Low", "N": "None"}),
+    "A": ("Availability", {"H": "High", "L": "Low", "N": "None"}),
+}
+
+
+def parse_cvss_vector(vector: str) -> list[dict[str, str]]:
+    """Parse a CVSS v3 vector like CVSS:3.1/AV:N/AC:L/... into labeled rows."""
+    out: list[dict[str, str]] = []
+    for piece in vector.split("/"):
+        if ":" not in piece or piece.startswith("CVSS"):
+            continue
+        key, val = piece.split(":", 1)
+        if key in _CVSS_LABEL:
+            label, options = _CVSS_LABEL[key]
+            out.append({
+                "code": key,
+                "label": label,
+                "value": options.get(val, val),
+            })
+    return out
 
 
 def _placeholder_scope(target: str) -> Any:

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Live Scan{% endblock %}
+{% block content %}
+
+<header class="bg-white rounded-lg shadow p-6 mb-6">
+  <h2 class="text-xl font-semibold mb-1">Live Pipeline View</h2>
+  <p class="text-sm text-slate-600">
+    Watch the four agents run in real time. Each event below comes from
+    the running pipeline via Server-Sent Events
+    <span class="info-tip" data-tip="Server-Sent Events: a one-way HTTP stream where the server pushes plain-text events to the browser. Lighter than WebSockets, perfect for log feeds.">[?]</span>.
+  </p>
+  <div class="mt-4 flex gap-3 items-center">
+    <form method="post" action="/demo">
+      <button type="submit"
+              {% if demo_running %}disabled{% endif %}
+              id="run-demo-btn"
+              class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-medium px-4 py-2 rounded shadow">
+        {% if demo_running %}Running…{% else %}Run demo{% endif %}
+      </button>
+    </form>
+    <span class="text-sm text-slate-500" id="demo-status">
+      {% if not has_anthropic_key %}
+        <code>ANTHROPIC_API_KEY</code> not set — triage will be skipped.
+      {% endif %}
+    </span>
+  </div>
+</header>
+
+<section class="bg-white rounded-lg shadow p-6 mb-6">
+  <h3 class="text-sm font-semibold text-slate-500 uppercase mb-4">Pipeline</h3>
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-3" id="pipeline">
+    {% for agent, blurb in [
+        ('recon', 'Host discovery, port scan, banner grab'),
+        ('enrichment', 'Match services to NVD CVE database'),
+        ('triage', 'Claude Opus 4.7 ranks each finding'),
+        ('reporter', 'Render markdown pentest report'),
+    ] %}
+    <div class="agent-stage relative border rounded-lg p-4 transition-colors"
+         data-agent="{{ agent }}">
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-semibold capitalize">{{ agent }}</span>
+        <span class="agent-icon text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-600">idle</span>
+      </div>
+      <p class="text-xs text-slate-500">{{ blurb }}</p>
+      <p class="agent-detail text-xs text-emerald-700 mt-2 font-mono min-h-[1em]"></p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="bg-white rounded-lg shadow">
+  <div class="px-6 py-4 border-b flex items-center justify-between">
+    <h3 class="text-lg font-semibold">Activity Stream</h3>
+    <span class="text-xs text-slate-500" id="event-count">0 events</span>
+  </div>
+  <div id="activity" class="px-6 py-4 max-h-[600px] overflow-y-auto font-mono text-xs space-y-1">
+    <div class="text-slate-400">Waiting for events… click Run demo to start.</div>
+  </div>
+</section>
+
+<script>
+(function() {
+  const activity = document.getElementById("activity");
+  const counter = document.getElementById("event-count");
+  const stages = document.querySelectorAll(".agent-stage");
+  const stageByName = {};
+  stages.forEach(el => stageByName[el.dataset.agent] = el);
+
+  let count = 0;
+  let waitingPlaceholder = activity.querySelector("div");
+
+  function setStageStatus(agent, status, detail) {
+    const stage = stageByName[agent];
+    if (!stage) return;
+    const icon = stage.querySelector(".agent-icon");
+    const det = stage.querySelector(".agent-detail");
+    stage.classList.remove("border-slate-200", "border-emerald-500", "border-amber-500", "border-red-500", "bg-emerald-50", "bg-amber-50", "bg-red-50");
+    icon.classList.remove("bg-slate-100", "text-slate-600", "bg-amber-100", "text-amber-700", "bg-emerald-100", "text-emerald-700", "bg-red-100", "text-red-700");
+    if (status === "running") {
+      stage.classList.add("border-amber-500", "bg-amber-50");
+      icon.classList.add("bg-amber-100", "text-amber-700");
+      icon.textContent = "running";
+    } else if (status === "done") {
+      stage.classList.add("border-emerald-500", "bg-emerald-50");
+      icon.classList.add("bg-emerald-100", "text-emerald-700");
+      icon.textContent = "done";
+    } else if (status === "failed") {
+      stage.classList.add("border-red-500", "bg-red-50");
+      icon.classList.add("bg-red-100", "text-red-700");
+      icon.textContent = "failed";
+    } else {
+      stage.classList.add("border-slate-200");
+      icon.classList.add("bg-slate-100", "text-slate-600");
+      icon.textContent = "idle";
+    }
+    if (detail !== undefined) det.textContent = detail || "";
+  }
+
+  function appendActivity(event) {
+    if (waitingPlaceholder) {
+      waitingPlaceholder.remove();
+      waitingPlaceholder = null;
+    }
+    const div = document.createElement("div");
+    div.className = "border-l-2 pl-3 py-1 " + colorForType(event.type);
+    const time = (event.timestamp || "").slice(11, 19);
+    const dataStr = formatData(event.data || {});
+    div.innerHTML = `
+      <span class="text-slate-400">${time}</span>
+      <span class="font-semibold">${event.type}</span>
+      ${dataStr ? `<span class="text-slate-600">${dataStr}</span>` : ""}
+    `;
+    activity.appendChild(div);
+    activity.scrollTop = activity.scrollHeight;
+    count += 1;
+    counter.textContent = `${count} event${count === 1 ? "" : "s"}`;
+  }
+
+  function formatData(data) {
+    const parts = [];
+    for (const [k, v] of Object.entries(data)) {
+      if (v === null || v === undefined) continue;
+      const s = Array.isArray(v) ? `[${v.join(",")}]` : String(v);
+      const trimmed = s.length > 80 ? s.slice(0, 79) + "…" : s;
+      parts.push(`${k}=${trimmed}`);
+    }
+    return parts.join(" · ");
+  }
+
+  function colorForType(type) {
+    if (type.startsWith("recon")) return "border-sky-400";
+    if (type.startsWith("enrichment")) return "border-violet-400";
+    if (type.startsWith("triage")) return "border-emerald-400";
+    if (type.startsWith("reporter")) return "border-amber-400";
+    if (type.startsWith("pipeline")) return "border-slate-500";
+    if (type.startsWith("demo")) return "border-rose-400";
+    return "border-slate-300";
+  }
+
+  const source = new EventSource("/api/events");
+
+  source.onmessage = (msg) => {
+    try { appendActivity(JSON.parse(msg.data)); } catch (e) {}
+  };
+
+  // Specific pipeline state transitions.
+  source.addEventListener("pipeline.agent_started", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    setStageStatus(evt.data.agent, "running");
+  });
+
+  source.addEventListener("pipeline.agent_finished", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    setStageStatus(evt.data.agent, "done");
+  });
+
+  source.addEventListener("pipeline.agent_failed", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    setStageStatus(evt.data.agent, "failed", evt.data.error);
+  });
+
+  // Mid-stage detail strings shown under each stage box.
+  source.addEventListener("recon.service_identified", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    const stage = stageByName.recon;
+    if (stage) stage.querySelector(".agent-detail").textContent =
+      `${evt.data.host}:${evt.data.port} → ${evt.data.service} ${evt.data.version || ""}`;
+  });
+  source.addEventListener("enrichment.cves_resolved", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    const stage = stageByName.enrichment;
+    if (stage) stage.querySelector(".agent-detail").textContent =
+      `${evt.data.count} CVE(s) for ${evt.data.keyword}`;
+  });
+  source.addEventListener("triage.thinking", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    const stage = stageByName.triage;
+    if (stage) stage.querySelector(".agent-detail").textContent =
+      `thinking about ${evt.data.cve_id}…`;
+  });
+  source.addEventListener("triage.finding_produced", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    const stage = stageByName.triage;
+    if (stage) stage.querySelector(".agent-detail").textContent =
+      `${evt.data.cve_id} → ${evt.data.severity}`;
+  });
+  source.addEventListener("reporter.done", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    setStageStatus("reporter", "done");
+  });
+
+  source.addEventListener("demo.finished", (e) => {
+    const evt = JSON.parse(e.data);
+    appendActivity(evt);
+    if (evt.data.scan_id) {
+      const note = document.createElement("div");
+      note.className = "px-6 py-3 mt-2 bg-emerald-50 border border-emerald-300 rounded";
+      note.innerHTML = `Demo finished. <a href="/scans/${evt.data.scan_id}" class="text-emerald-700 font-semibold hover:underline">View scan #${evt.data.scan_id} &rarr;</a>`;
+      activity.appendChild(note);
+      activity.scrollTop = activity.scrollHeight;
+    }
+    document.getElementById("run-demo-btn").disabled = false;
+    document.getElementById("run-demo-btn").textContent = "Run demo";
+  });
+
+  source.onerror = () => {
+    // Silent — EventSource auto-reconnects.
+  };
+})();
+</script>
+
+{% endblock %}

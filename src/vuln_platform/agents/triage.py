@@ -14,7 +14,7 @@ the claude-api skill.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import anthropic
 from pydantic import BaseModel
@@ -23,6 +23,9 @@ from ..audit import AuditLogger
 from ..models import CVE, Finding, Host
 from ..storage import Store
 from .base import AgentContext, BaseAgent
+
+if TYPE_CHECKING:
+    from ..events import EventBus
 
 
 logger = logging.getLogger(__name__)
@@ -75,13 +78,17 @@ class TriageAgent(BaseAgent):
         audit: AuditLogger,
         anthropic_client: anthropic.Anthropic | None = None,
         model: str = "claude-opus-4-7",
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self.store = store
         self.audit = audit
         self.client = anthropic_client or anthropic.Anthropic()
         self.model = model
+        self.event_bus = event_bus
 
     def run(self, context: AgentContext) -> AgentContext:
+        total_cves = sum(len(v) for v in context.cves_by_service.values())
+        self.emit("triage.started", total=total_cves, model=self.model)
         for host in context.hosts:
             for port in host.open_ports:
                 if port.service is None:
@@ -95,10 +102,23 @@ class TriageAgent(BaseAgent):
                     )
                     continue
                 for cve in cves:
+                    self.emit(
+                        "triage.thinking",
+                        host=str(host.ip), port=port.number,
+                        cve_id=cve.cve_id,
+                    )
                     finding = self._triage_one(host, port.number, port.service.name,
                                                port.service.version, cve)
                     context.findings.append(finding)
                     self.store.save_finding(context.scan_id, finding)
+                    self.emit(
+                        "triage.finding_produced",
+                        host=str(host.ip), port=port.number,
+                        cve_id=finding.cve_id,
+                        severity=finding.severity,
+                        exploit_likelihood=finding.exploit_likelihood,
+                    )
+        self.emit("triage.done", finding_count=len(context.findings))
         return context
 
     def _triage_one(

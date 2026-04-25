@@ -13,9 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vuln_platform.config import Settings
+from vuln_platform.events import Event, EventBus
 from vuln_platform.models import Finding, Host, Port, Service
 from vuln_platform.storage import Store
 from vuln_platform.web import create_app
+from vuln_platform.web.app import parse_cvss_vector
 
 
 @pytest.fixture
@@ -30,8 +32,13 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def client(settings: Settings) -> TestClient:
-    return TestClient(create_app(settings))
+def event_bus() -> EventBus:
+    return EventBus()
+
+
+@pytest.fixture
+def client(settings: Settings, event_bus: EventBus) -> TestClient:
+    return TestClient(create_app(settings, event_bus))
 
 
 def test_index_empty(client: TestClient) -> None:
@@ -111,6 +118,75 @@ def test_demo_status_initially_idle(client: TestClient) -> None:
     body = resp.json()
     assert body["running"] is False
     assert body["last_scan_id"] is None
+
+
+def test_about_page(client: TestClient) -> None:
+    resp = client.get("/about")
+    assert resp.status_code == 200
+    assert "Recon Agent" in resp.text
+    assert "Triage Agent" in resp.text
+    assert "Ethics" in resp.text
+
+
+def test_live_page(client: TestClient) -> None:
+    resp = client.get("/live")
+    assert resp.status_code == 200
+    assert "Live Pipeline View" in resp.text
+    assert "EventSource" in resp.text  # SSE wired up
+
+
+def test_sse_route_registered(client: TestClient) -> None:
+    paths = {r.path for r in client.app.routes}  # type: ignore[attr-defined]
+    assert "/api/events" in paths
+
+
+def test_sse_generator_emits_published_events(event_bus: EventBus) -> None:
+    """Test the SSE generator directly — avoids the streaming HTTP layer."""
+    from vuln_platform.web.app import _sse_generator
+
+    gen = _sse_generator(event_bus)
+    first = next(gen)
+    assert b"connected" in first
+
+    event_bus.publish(Event(type="recon.started", data={"target": "127.0.0.1"}))
+    second = next(gen)
+    assert b"recon.started" in second
+    assert b"127.0.0.1" in second
+
+    event_bus.close()  # sentinel terminates the generator
+    with pytest.raises(StopIteration):
+        next(gen)
+
+
+def test_scan_detail_links_to_audit_when_available(
+    client: TestClient, settings: Settings
+) -> None:
+    settings.audit_log_path.write_text(json.dumps({
+        "timestamp": "2026-04-24T22:00:00+00:00",
+        "model": "claude-opus-4-7",
+        "system_prompt_sha256": "a" * 64,
+        "user_prompt_sha256": "b" * 64,
+        "response_text": "ok",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "extra": {"cve_id": "CVE-2021-41773", "agent": "triage"},
+    }) + "\n")
+    store = Store(settings.db_path)
+    scan_id = store.create_scan("127.0.0.1")
+    store.save_finding(scan_id, _make_finding("127.0.0.1", 18080, "critical"))
+
+    resp = client.get(f"/scans/{scan_id}")
+    assert resp.status_code == 200
+    assert "How was this finding produced?" in resp.text
+    assert "/audit#cve-CVE-2021-41773" in resp.text
+
+
+def test_parse_cvss_vector_v31() -> None:
+    result = parse_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+    labels = {r["code"]: r["value"] for r in result}
+    assert labels["AV"] == "Network"
+    assert labels["AC"] == "Low"
+    assert labels["PR"] == "None"
+    assert labels["C"] == "High"
 
 
 def _make_finding(host: str, port: int, severity: str) -> Finding:

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Architecture &amp; Walkthrough{% endblock %}
+{% block content %}
+
+<header class="bg-white rounded-lg shadow p-6 mb-6">
+  <h2 class="text-2xl font-semibold mb-2">How this platform works</h2>
+  <p class="text-slate-600">
+    A four-agent pipeline that turns a target IP into a triaged,
+    LLM-reasoned pentest report. Each stage hands off enriched data
+    to the next, and every Claude call is recorded for review.
+  </p>
+</header>
+
+<section class="bg-white rounded-lg shadow p-6 mb-6">
+  <h3 class="text-lg font-semibold mb-4">The pipeline at a glance</h3>
+  <svg viewBox="0 0 900 220" class="w-full h-auto" role="img" aria-label="Pipeline diagram">
+    <defs>
+      <marker id="arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+        <polygon points="0 0, 10 4, 0 8" fill="#475569"/>
+      </marker>
+    </defs>
+    <!-- stage boxes -->
+    <g font-family="ui-sans-serif, system-ui" font-size="14">
+      {% for x, color, name, sub in [
+        (40,  '#0ea5e9', 'Recon',      'scapy / sockets'),
+        (250, '#8b5cf6', 'Enrichment', 'NVD API / cache'),
+        (460, '#10b981', 'Triage',     'Claude Opus 4.7'),
+        (670, '#f59e0b', 'Reporter',   'markdown + tables'),
+      ] %}
+      <rect x="{{ x }}" y="60" width="170" height="90" rx="10" fill="white" stroke="{{ color }}" stroke-width="2"/>
+      <text x="{{ x + 85 }}" y="95" text-anchor="middle" font-weight="600" fill="#0f172a">{{ name }}</text>
+      <text x="{{ x + 85 }}" y="120" text-anchor="middle" font-size="11" fill="#475569">{{ sub }}</text>
+      {% endfor %}
+      <!-- arrows -->
+      <line x1="210" y1="105" x2="248" y2="105" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+      <line x1="420" y1="105" x2="458" y2="105" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+      <line x1="630" y1="105" x2="668" y2="105" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+      <!-- bottom: shared stores -->
+      <rect x="200" y="180" width="500" height="30" rx="6" fill="#f1f5f9" stroke="#cbd5e1"/>
+      <text x="450" y="200" text-anchor="middle" font-size="12" fill="#475569">
+        SQLite findings.db &middot; audit.jsonl (LLM I/O)
+      </text>
+      <line x1="125" y1="150" x2="125" y2="180" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+      <line x1="335" y1="150" x2="335" y2="180" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+      <line x1="545" y1="150" x2="545" y2="180" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+      <line x1="755" y1="150" x2="755" y2="180" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    </g>
+  </svg>
+</section>
+
+{% set agents = [
+  {
+    'name': 'Recon Agent',
+    'color': 'sky',
+    'one_liner': 'Discovers what is exposed on the network.',
+    'steps': [
+      ('Host discovery', 'ICMP echo sweep across the scope — like nmap -sn. Skipped in demos because we already know the loopback target is up.'),
+      ('Port scan', 'TCP probe of the requested ports. Auto-picks SYN scan (fast, requires root) or userland connect scan (works without privileges) based on euid.'),
+      ('Banner grab', 'Userland TCP socket reads each open port, sometimes after sending a protocol-specific nudge (GET /, EHLO, INFO). Parses out service+version.'),
+    ],
+    'tech': 'scapy (raw sockets) + Python socket library + ThreadPoolExecutor for concurrency.',
+  },
+  {
+    'name': 'Enrichment Agent',
+    'color': 'violet',
+    'one_liner': 'Maps detected services to known vulnerabilities.',
+    'steps': [
+      ('Build keyword', 'service+version becomes an NVD search term, e.g. "apache 2.4.49".'),
+      ('Query NVD', 'Hits the NIST National Vulnerability Database v2.0 API. Cached locally so repeat scans do not re-spend rate limit.'),
+      ('Seed fallback', 'For demos and air-gapped runs, a JSON seed file maps known services to pre-fetched CVE records. Used when NVD is unreachable.'),
+    ],
+    'tech': 'httpx (HTTP/2-capable client) + NVD API v2.0 + a small SQLite cache.',
+  },
+  {
+    'name': 'Triage Agent',
+    'color': 'emerald',
+    'one_liner': 'LLM reasoning over each (service, CVE) pair.',
+    'steps': [
+      ('Build prompt', 'Per-finding user message includes host, port, service, version, CVE description, CVSS score, references. System prompt encodes the rubric.'),
+      ('Call Claude', 'claude-opus-4-7 with adaptive thinking and structured output via messages.parse() bound to a pydantic schema. System prompt cached so repeat calls reuse the prefix.'),
+      ('Persist + audit', 'Severity, exploit likelihood, rationale, recommended action saved to findings table. Full prompt/response/usage written to audit.jsonl.'),
+    ],
+    'tech': 'Anthropic Python SDK + pydantic schema for structured output + JSONL audit log.',
+  },
+  {
+    'name': 'Reporter Agent',
+    'color': 'amber',
+    'one_liner': 'Builds a defendable, professional pentest report.',
+    'steps': [
+      ('Compile context', 'Pulls discovered hosts, CVEs, and triaged findings from the shared context.'),
+      ('Render markdown', 'Sections: executive summary, methodology, scope attestation, discovered services, findings (sorted by severity), per-finding detail.'),
+      ('Output', 'Markdown is the canonical output format. The dashboard renders it as HTML; pandoc converts to PDF.'),
+    ],
+    'tech': 'Pure Python string templating — no heavy report library.',
+  },
+] %}
+
+{% for agent in agents %}
+<section class="bg-white rounded-lg shadow p-6 mb-6">
+  <div class="flex items-center gap-3 mb-3">
+    <span class="w-3 h-3 rounded-full bg-{{ agent.color }}-500"></span>
+    <h3 class="text-lg font-semibold">{{ agent.name }}</h3>
+    <span class="text-sm text-slate-500">— {{ agent.one_liner }}</span>
+  </div>
+  <ol class="list-decimal pl-6 space-y-2 text-sm">
+    {% for step, detail in agent.steps %}
+    <li><strong>{{ step }}.</strong> {{ detail }}</li>
+    {% endfor %}
+  </ol>
+  <p class="mt-3 text-xs text-slate-500"><strong>Stack:</strong> {{ agent.tech }}</p>
+</section>
+{% endfor %}
+
+<section class="bg-white rounded-lg shadow p-6 mb-6">
+  <h3 class="text-lg font-semibold mb-3">Ethics &amp; authorization model</h3>
+  <ul class="list-disc pl-6 space-y-2 text-sm text-slate-700">
+    <li>
+      Every scan requires a <strong>scope file</strong>
+      <span class="info-tip" data-tip="A YAML file listing authorized CIDR ranges plus a signed attestation: who authorized the scan, when, and the boilerplate confirming you accept legal responsibility.">[?]</span>:
+      authorized CIDR ranges plus a signed attestation
+      (<code>authorized_by</code>, <code>date</code>, <code>statement</code>).
+    </li>
+    <li>
+      Targets are cross-checked against the scope <strong>before any
+      packet is sent</strong>. Out-of-scope targets fail-fast with a
+      non-zero exit code.
+    </li>
+    <li>
+      The CFAA (18 U.S.C. § 1030) and equivalent foreign statutes treat
+      unauthorized scanning as a federal crime. The scope-file
+      requirement is the platform's primary safeguard.
+    </li>
+    <li>
+      Every Claude API call is recorded in <code>audit.jsonl</code> with
+      prompt SHA-256s, response text, model, and token usage. The
+      <a class="text-emerald-700 hover:underline" href="/audit">audit log viewer</a>
+      surfaces this directly.
+    </li>
+  </ul>
+</section>
+
+<section class="bg-white rounded-lg shadow p-6 mb-6">
+  <h3 class="text-lg font-semibold mb-3">Tech stack</h3>
+  <table class="w-full text-sm">
+    <tbody>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500 w-40">Language</td><td>Python 3.10+</td></tr>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500">Scanning</td><td>scapy (raw sockets) + standard library sockets</td></tr>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500">CVE source</td><td>NIST NVD API v2.0</td></tr>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500">LLM</td><td>Anthropic Claude Opus 4.7 (adaptive thinking, structured output, prompt caching)</td></tr>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500">Storage</td><td>SQLite (DAO-pattern abstraction so MySQL can swap in)</td></tr>
+      <tr class="border-b"><td class="py-2 font-mono text-slate-500">Web</td><td>FastAPI + Jinja2 + Tailwind (CDN) + Server-Sent Events</td></tr>
+      <tr><td class="py-2 font-mono text-slate-500">Tests</td><td>pytest with mocked scapy/NVD/Anthropic — runs offline</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="bg-white rounded-lg shadow p-6">
+  <h3 class="text-lg font-semibold mb-3">See it for yourself</h3>
+  <div class="flex flex-wrap gap-3">
+    <a href="/live" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded shadow text-sm font-medium">
+      Open the live pipeline view &rarr;
+    </a>
+    <a href="/" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded shadow text-sm font-medium">
+      Browse past scans
+    </a>
+    <a href="/audit" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded shadow text-sm font-medium">
+      Inspect the LLM audit log
+    </a>
+  </div>
+</section>
+
+{% endblock %}

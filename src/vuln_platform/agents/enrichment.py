@@ -15,13 +15,16 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from ..models import CVE
 from ..storage import Store
 from .base import AgentContext, BaseAgent
+
+if TYPE_CHECKING:
+    from ..events import EventBus
 
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,7 @@ class EnrichmentAgent(BaseAgent):
         http_client: httpx.Client | None = None,
         results_per_query: int = DEFAULT_RESULTS_PER_QUERY,
         seed_path: Path | None = None,
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self.store = store
         self.api_key = api_key
@@ -50,8 +54,11 @@ class EnrichmentAgent(BaseAgent):
         self.seed: dict[str, list[CVE]] = (
             _load_seed(seed_path) if seed_path else {}
         )
+        self.event_bus = event_bus
 
     def run(self, context: AgentContext) -> AgentContext:
+        self.emit("enrichment.started",
+                  service_count=sum(len(h.open_ports) for h in context.hosts))
         queried: set[str] = set()
         for host in context.hosts:
             for port in host.open_ports:
@@ -70,15 +77,30 @@ class EnrichmentAgent(BaseAgent):
                         len(seeded), keyword,
                     )
                     cves = seeded
+                    self.emit("enrichment.using_seed",
+                              keyword=keyword, count=len(seeded))
                 else:
                     logger.info("enrichment: NVD lookup %r", keyword)
+                    self.emit("enrichment.querying_nvd", keyword=keyword)
                     cves = self._fetch_cves(keyword)
                     if not cves and key in self.seed:
                         cves = self.seed[key]
+                        self.emit("enrichment.using_seed_fallback",
+                                  keyword=keyword, count=len(self.seed[key]))
 
+                self.emit(
+                    "enrichment.cves_resolved",
+                    keyword=keyword,
+                    count=len(cves),
+                    cve_ids=[c.cve_id for c in cves],
+                )
                 context.cves_by_service[key] = cves
                 for cve in cves:
                     self.store.upsert_cve(cve)
+        self.emit(
+            "enrichment.done",
+            total_cves=sum(len(v) for v in context.cves_by_service.values()),
+        )
         return context
 
     def _fetch_cves(self, keyword: str) -> list[CVE]:

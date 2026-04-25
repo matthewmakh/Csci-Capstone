@@ -2,13 +2,17 @@
 {% block title %}Scans{% endblock %}
 {% block content %}
 
-<section class="bg-white rounded-lg shadow p-6 mb-6 flex items-start justify-between">
+<section class="bg-white rounded-lg shadow p-6 mb-6 flex items-start justify-between flex-wrap gap-4">
   <div>
-    <h2 class="text-lg font-semibold mb-1">Run a one-click demo</h2>
+    <h2 class="text-lg font-semibold mb-1">
+      Run a one-click demo
+      <span class="info-tip" data-tip="Spins up examples/demo_target/fake_service.py on 127.0.0.1:18080 (advertises Apache 2.4.49 banner) and runs the full pipeline against it. Self-contained — no external network needed.">[?]</span>
+    </h2>
     <p class="text-sm text-slate-600">
-      Spins up the local fake target and runs Recon → Enrichment
+      Recon → Enrichment
       {% if has_anthropic_key %}→ Triage (Claude Opus 4.7){% else %}(triage skipped — no API key){% endif %}
       → Reporter. Takes ~10 seconds.
+      <a href="/live" class="text-emerald-700 hover:underline">Watch it live &rarr;</a>
     </p>
     {% if not has_anthropic_key %}
     <p class="text-xs text-amber-700 mt-2">
@@ -17,13 +21,18 @@
     </p>
     {% endif %}
   </div>
-  <form method="post" action="/demo">
-    <button type="submit"
-            {% if demo_running %}disabled{% endif %}
-            class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-medium px-4 py-2 rounded shadow">
-      {% if demo_running %}Running…{% else %}Run demo{% endif %}
-    </button>
-  </form>
+  <div class="flex gap-2">
+    <a href="/about" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-4 py-2 rounded shadow text-sm font-medium">
+      How it works
+    </a>
+    <form method="post" action="/demo">
+      <button type="submit"
+              {% if demo_running %}disabled{% endif %}
+              class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-medium px-4 py-2 rounded shadow">
+        {% if demo_running %}Running…{% else %}Run demo{% endif %}
+      </button>
+    </form>
+  </div>
 </section>
 
 <section class="bg-white rounded-lg shadow">
